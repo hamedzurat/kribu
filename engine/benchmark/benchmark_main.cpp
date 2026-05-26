@@ -32,6 +32,7 @@
 
 #include "config.hpp"
 #include "kribu/benchmark.hpp"
+#include "kribu/player/_.hpp"
 
 using namespace kribu::board;
 using namespace kribu::sholoGuti;
@@ -52,6 +53,7 @@ struct GameMetadata {
   std::string outcome;
   std::string reason;
   int totalTurns;
+  int winMargin;
   std::string filePath;
 };
 
@@ -68,6 +70,7 @@ struct GameArrays {
   std::shared_ptr<arrow::Array> isP1Turn;
   std::shared_ptr<arrow::Array> chosenMove;
   std::shared_ptr<arrow::Array> possibleMoves;
+  std::shared_ptr<arrow::Array> playerPlayed;
 };
 
 /**
@@ -75,9 +78,8 @@ struct GameArrays {
  * @param history The game turn history.
  * @return Finished Arrow arrays for each column.
  */
-// NOLINT(readability-function-cognitive-complexity) -- complexity inflated by PARQUET_THROW_NOT_OK macros
-GameArrays build_turn_arrays(
-    const std::vector<TurnRecord>& history) {  // NOLINT(readability-function-cognitive-complexity)
+GameArrays build_turn_arrays(  // NOLINT(readability-function-cognitive-complexity)
+    const std::vector<TurnRecord>& history) {
   arrow::Int64Builder meBuilder;
   arrow::Int64Builder oppBuilder;
   arrow::Int8Builder activeCaptureIdxBuilder;
@@ -85,6 +87,7 @@ GameArrays build_turn_arrays(
   arrow::Int16Builder chosenMoveBuilder;
   auto valueBuilder = std::make_shared<arrow::Int16Builder>();
   arrow::ListBuilder possibleMovesBuilder(arrow::default_memory_pool(), valueBuilder);
+  arrow::StringBuilder playerPlayedBuilder;
 
   for (const auto& turn : history) {
     PARQUET_THROW_NOT_OK(meBuilder.Append(static_cast<int64_t>(turn.state.me)));
@@ -96,6 +99,7 @@ GameArrays build_turn_arrays(
     for (int i = 0; i < turn.possibleMoves.size(); ++i) {
       PARQUET_THROW_NOT_OK(valueBuilder->Append(static_cast<int16_t>(turn.possibleMoves.moves[i])));
     }
+    PARQUET_THROW_NOT_OK(playerPlayedBuilder.Append(std::string(turn.playerPlayed)));
   }
 
   GameArrays arrays;
@@ -105,6 +109,7 @@ GameArrays build_turn_arrays(
   PARQUET_THROW_NOT_OK(isP1TurnBuilder.Finish(&arrays.isP1Turn));
   PARQUET_THROW_NOT_OK(chosenMoveBuilder.Finish(&arrays.chosenMove));
   PARQUET_THROW_NOT_OK(possibleMovesBuilder.Finish(&arrays.possibleMoves));
+  PARQUET_THROW_NOT_OK(playerPlayedBuilder.Finish(&arrays.playerPlayed));
   return arrays;
 }
 
@@ -118,6 +123,7 @@ struct GameTableParams {
   std::string outcomeStr;        ///< Outcome string (P1_WINS / P2_WINS / DRAW).
   std::string reasonStr;         ///< Reason string (ELIMINATION / STALEMATE / etc.).
   int totalTurns = 0;            ///< Total number of turns in the game.
+  int winMargin = 0;             ///< Victory margin (pieces remaining difference).
 };
 
 /**
@@ -134,18 +140,25 @@ std::shared_ptr<arrow::Table> build_game_table(const GameArrays& arrays, const G
   metadata->Append("outcome", params.outcomeStr);
   metadata->Append("reason", params.reasonStr);
   metadata->Append("totalTurns", std::to_string(params.totalTurns));
+  metadata->Append("winMargin", std::to_string(params.winMargin));
 
   auto schema = arrow::schema({arrow::field("me", arrow::int64()),
                                arrow::field("opp", arrow::int64()),
                                arrow::field("activeCaptureIdx", arrow::int8()),
                                arrow::field("isP1Turn", arrow::boolean()),
                                arrow::field("chosenMove", arrow::int16()),
-                               arrow::field("possibleMoves", arrow::list(arrow::int16()))},
+                               arrow::field("possibleMoves", arrow::list(arrow::int16())),
+                               arrow::field("playerPlayed", arrow::utf8())},
                               metadata);
 
-  return arrow::Table::Make(
-      schema,
-      {arrays.me, arrays.opp, arrays.activeCaptureIdx, arrays.isP1Turn, arrays.chosenMove, arrays.possibleMoves});
+  return arrow::Table::Make(schema,
+                            {arrays.me,
+                             arrays.opp,
+                             arrays.activeCaptureIdx,
+                             arrays.isP1Turn,
+                             arrays.chosenMove,
+                             arrays.possibleMoves,
+                             arrays.playerPlayed});
 }
 
 /**
@@ -190,6 +203,9 @@ std::string reason_to_string(WinReason reason) {
   }
   if (reason == WinReason::INVALID_MOVE) {
     return "INVALID_MOVE";
+  }
+  if (reason == WinReason::REPETITION) {
+    return "REPETITION";
   }
   return "DRAW_MAX_TURNS";
 }
@@ -239,6 +255,7 @@ void save_manifest_json(const std::vector<GameMetadata>& games) {
             << R"(    "outcome": ")" << game.outcome << R"(",)" << "\n"
             << R"(    "reason": ")" << game.reason << R"(",)" << "\n"
             << "    \"totalTurns\": " << game.totalTurns << ",\n"
+            << "    \"winMargin\": " << game.winMargin << ",\n"
             << R"(    "filePath": ")" << game.filePath << R"(")" << "\n"
             << "  }" << (i + 1 < games.size() ? "," : "") << "\n";
   }
@@ -330,13 +347,17 @@ void save_game_parquet(std::string_view player1Name,
                          .gameIdx = gameIdx,
                          .outcomeStr = outcome_to_string(outcome.result),
                          .reasonStr = reason_to_string(outcome.reason),
-                         .totalTurns = static_cast<int>(history.size())};
+                         .totalTurns = static_cast<int>(history.size()),
+                         .winMargin = outcome.winMargin};
 
   const GameArrays arrays = build_turn_arrays(history);
   const auto table = build_game_table(arrays, params);
 
-  const std::string filename = "benchmark/game_" + std::string(player1Name) + "_vs_" + std::string(player2Name) + "_"
-                               + std::to_string(gameIdx) + ".parquet";
+  const bool p1Starts = (gameIdx % 2 == 0);
+  const std::string startPlayer = p1Starts ? std::string(player1Name) : std::string(player2Name);
+  const std::string nextPlayer = p1Starts ? std::string(player2Name) : std::string(player1Name);
+  const std::string filename =
+      "benchmark/game_" + startPlayer + "_vs_" + nextPlayer + "_" + std::to_string(gameIdx) + ".parquet";
   write_parquet_file(*table, filename);
 
   {
@@ -347,6 +368,7 @@ void save_game_parquet(std::string_view player1Name,
                                             .outcome = params.outcomeStr,
                                             .reason = params.reasonStr,
                                             .totalTurns = params.totalTurns,
+                                            .winMargin = params.winMargin,
                                             .filePath = filename});
   }
 }
@@ -358,17 +380,19 @@ void save_game_parquet(std::string_view player1Name,
  * @return 0 on success, non-zero on error.
  */
 int main() {
+  kribu::maxRepetitions = kribu::benchmark::REPETITION_LIMIT;
+  kribu::allowRepetition = kribu::benchmark::ALLOW_REPETITION;
   try {
     std::filesystem::create_directories("benchmark");
 
-    const auto playerList = get_benchmark_players();
+    const auto playerList = kribu::player::BENCHMARK_PLAYERS;
     std::map<std::string, Player> players;
     for (const auto& playerEntry : playerList) {
       players[std::string(playerEntry.name)] = playerEntry;
       std::cout << "Registered player: " << playerEntry.name << "\n";
     }
 
-    const auto matchups = get_benchmark_matchups();
+    const auto matchups = BENCHMARK_MATCHUPS;
 
     std::cout << "\nStarting " << matchups.size() << " matchups with " << THREAD_COUNT << " threads...\n\n";
 

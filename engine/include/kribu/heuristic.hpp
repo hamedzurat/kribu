@@ -9,6 +9,7 @@
 #include <bit>
 
 #include "board.hpp"
+#include "rules.hpp"
 #include "types.hpp"
 
 namespace kribu::heuristics {
@@ -19,83 +20,83 @@ using namespace kribu::board;
  * @brief Default values for each of the 37 nodes on the board.
  * @details Values are initialized to 100 to replicate the baseline piece-count heuristic.
  */
-constexpr std::array<i32, NUM_NODES> HEURISTIC_NODE_WEIGHTS = []() constexpr {
-  std::array<i32, NUM_NODES> values{};
+constexpr std::array<i32, NUM_NODES> HEURISTIC_NODE_WEIGHTS = {
+    // 120────────────160────────────120
+    //   ╲             │             ╱
+    //     ╲           │           ╱
+    //       ╲         │         ╱
+    //         110────150────110
+    //           ╲      │      ╱
+    //             ╲    │    ╱
+    //               ╲  │  ╱
+    // 100────110─────140─────110────100
+    // │ ╲     │     ╱ │ ╲     │     ╱ │
+    // │   ╲   │   ╱   │   ╲   │   ╱   │
+    // │     ╲ │ ╱     │     ╲ │ ╱     │
+    // 80──────90─────120──────90──────80
+    // │     ╱ │ ╲     │     ╱ │ ╲     │
+    // │   ╱   │   ╲   │   ╱   │   ╲   │
+    // │ ╱     │     ╲ │ ╱     │     ╲ │
+    // 65──────80─────100──────80──────65
+    // │ ╲     │     ╱ │ ╲     │     ╱ │
+    // │   ╲   │   ╱   │   ╲   │   ╱   │
+    // │     ╲ │ ╱     │     ╲ │ ╱     │
+    // 50──────70──────90──────70──────50
+    // │     ╱ │ ╲     │     ╱ │ ╲     │
+    // │   ╱   │   ╲   │   ╱   │   ╲   │
+    // │ ╱     │     ╲ │ ╱     │     ╲ │
+    // 30──────40──────65──────40──────30
+    //               ╱  │  ╲
+    //             ╱    │    ╲
+    //           ╱      │      ╲
+    //         20──────40──────20
+    //       ╱          │         ╲
+    //     ╱            │           ╲
+    //   ╱              │             ╲
+    // 10──────────────20──────────────10
 
-  // 120────────────160────────────120
-  //   ╲             │             ╱
-  //     ╲           │           ╱
-  //       ╲         │         ╱
-  //         110────150────110
-  //           ╲      │      ╱
-  //             ╲    │    ╱
-  //               ╲  │  ╱
-  // 100────110─────140─────110────100
-  // │ ╲     │     ╱ │ ╲     │     ╱ │
-  // │   ╲   │   ╱   │   ╲   │   ╱   │
-  // │     ╲ │ ╱     │     ╲ │ ╱     │
-  // 80──────90─────120──────90──────80
-  // │     ╱ │ ╲     │     ╱ │ ╲     │
-  // │   ╱   │   ╲   │   ╱   │   ╲   │
-  // │ ╱     │     ╲ │ ╱     │     ╲ │
-  // 65──────80─────100──────80──────65
-  // │ ╲     │     ╱ │ ╲     │     ╱ │
-  // │   ╲   │   ╱   │   ╲   │   ╱   │
-  // │     ╲ │ ╱     │     ╲ │ ╱     │
-  // 50──────70──────90──────70──────50
-  // │     ╱ │ ╲     │     ╱ │ ╲     │
-  // │   ╱   │   ╲   │   ╱   │   ╲   │
-  // │ ╱     │     ╲ │ ╱     │     ╲ │
-  // 30──────40──────65──────40──────30
-  //               ╱  │  ╲
-  //             ╱    │    ╲
-  //           ╱      │      ╲
-  //         20──────40──────20
-  //       ╱          │         ╲
-  //     ╱            │           ╲
-  //   ╱              │             ╲
-  // 10──────────────20──────────────10
+    // Top triangle / Crown
+    120,
+    160,
+    120,
+    110,
+    150,
+    110,
 
-  values[0] = 120;
-  values[1] = 160;
-  values[2] = 120;
-  values[3] = 110;
-  values[4] = 150;
-  values[5] = 110;
-  values[6] = 100;
-  values[7] = 110;
-  values[8] = 140;
-  values[9] = 110;
-  values[10] = 100;
-  values[11] = 80;
-  values[12] = 90;
-  values[13] = 120;
-  values[14] = 90;
-  values[15] = 80;
-  values[16] = 65;
-  values[17] = 80;
-  values[18] = 100;
-  values[19] = 80;
-  values[20] = 65;
-  values[21] = 50;
-  values[22] = 70;
-  values[23] = 90;
-  values[24] = 70;
-  values[25] = 50;
-  values[26] = 30;
-  values[27] = 40;
-  values[28] = 65;
-  values[29] = 40;
-  values[30] = 30;
-  values[31] = 20;
-  values[32] = 40;
-  values[33] = 20;
-  values[34] = 10;
-  values[35] = 20;
-  values[36] = 10;
+    // Main grid rows
+    100,
+    110,
+    140,
+    110,
+    100,
+    80,
+    90,
+    120,
+    90,
+    80,
+    65,
+    80,
+    100,
+    80,
+    65,
+    50,
+    70,
+    90,
+    70,
+    50,
+    30,
+    40,
+    65,
+    40,
+    30,
 
-  return values;
-}();
+    // Bottom triangle
+    20,
+    40,
+    20,
+    10,
+    20,
+    10};
 
 /**
  * @brief Evaluates a board state by summing specified values for each player's pieces.
@@ -122,6 +123,29 @@ template <const std::array<i32, NUM_NODES>& Weights>
  */
 [[nodiscard]] constexpr i32 evaluate_piece_count(const boardState& state) noexcept {
   return 100 * (static_cast<i32>(std::popcount(state.me)) - static_cast<i32>(std::popcount(state.opp)));
+}
+
+/**
+ * @brief Evaluates a board state based on the mobility (number of legal moves) difference.
+ * @param state The board state to evaluate.
+ * @return The mobility difference score.
+ */
+[[nodiscard]] inline i32 evaluate_mobility(const boardState& state) noexcept {
+  int activeMoves = sholoGuti::all_possible_moves(state).size();
+  int oppMoves = sholoGuti::all_possible_moves(sholoGuti::flip_board(state)).size();
+  return 10 * (activeMoves - oppMoves);
+}
+
+/**
+ * @brief Combines piece count, mobility, and positional node weights.
+ * @param state The board state to evaluate.
+ * @return The combined evaluation score.
+ */
+[[nodiscard]] inline i32 evaluate_mixed(const boardState& state) noexcept {
+  i32 pieces = evaluate_piece_count(state);
+  i32 mobility = evaluate_mobility(state);
+  i32 position = evaluate_by_node_values<HEURISTIC_NODE_WEIGHTS>(state);
+  return pieces + mobility + (position / 4);
 }
 
 }  // namespace kribu::heuristics

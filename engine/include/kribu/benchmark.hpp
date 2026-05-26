@@ -12,10 +12,10 @@
 #include <mutex>
 #include <string_view>
 #include <thread>
-#include <type_traits>
 #include <vector>
 
 #include "board.hpp"
+#include "kribu/player/random.hpp"
 #include "rules.hpp"
 #include "types.hpp"
 
@@ -33,13 +33,14 @@ struct TurnRecord {
   bool isP1Turn = false;
   int chosenMove = -1;
   MoveList possibleMoves;
+  std::string_view playerPlayed;
 };
 
 struct MatchConfig {
   std::string_view player1Name;
   std::string_view player2Name;
-  int games = 10;
-  int maxTurns = 5000;
+  int games;
+  int maxTurns;
 };
 
 /**
@@ -52,7 +53,7 @@ enum class GameResult : std::uint8_t { P1_WINS, P2_WINS, DRAW };
  * @enum WinReason
  * @brief Represents the reason why a player won or the game ended.
  */
-enum class WinReason : std::uint8_t { ELIMINATION, STALEMATE, INVALID_MOVE, DRAW_MAX_TURNS };
+enum class WinReason : std::uint8_t { ELIMINATION, STALEMATE, INVALID_MOVE, DRAW_MAX_TURNS, REPETITION };
 
 /**
  * @struct GameOutcome
@@ -61,6 +62,7 @@ enum class WinReason : std::uint8_t { ELIMINATION, STALEMATE, INVALID_MOVE, DRAW
 struct GameOutcome {
   GameResult result;
   WinReason reason;
+  int winMargin = 0;
 };
 
 /**
@@ -119,71 +121,20 @@ struct GamePerf {
  */
 struct TournamentConfig {
   int totalGames = 0;
-  int maxTurns = 5000;
+  int maxTurns = 1000;
   int threadCount = 0;
   std::atomic<int>* completedGames = nullptr;
 };
 
 /**
- * @brief Helper function to execute a single move and record metrics.
- * @return The move ID played, or -1 if invalid or error.
+ * @brief Saves a completed game dataset directly to a Parquet file.
+ * @details Implemented in benchmark_main.cpp using Apache Arrow.
  */
-constexpr int execute_move(
-    boardState& state, bool& isP1Turn, const Player& player1, const Player& player2, GamePerf& perf) {
-  int moveId = -1;
-  u64 moveNodes = 0;
-  double elapsed = 0.0;
-
-  if (std::is_constant_evaluated()) {
-    if (isP1Turn) {
-      moveId = player1.select(state, moveNodes);
-      perf.p1.nodes += moveNodes;
-    } else {
-      moveId = player2.select(state, moveNodes);
-      perf.p2.nodes += moveNodes;
-    }
-  } else {
-    auto startTime = std::chrono::high_resolution_clock::now();
-    if (isP1Turn) {
-      moveId = player1.select(state, moveNodes);
-      perf.p1.nodes += moveNodes;
-    } else {
-      moveId = player2.select(state, moveNodes);
-      perf.p2.nodes += moveNodes;
-    }
-    auto endTime = std::chrono::high_resolution_clock::now();
-    elapsed = std::chrono::duration<double>(endTime - startTime).count();
-  }
-
-  if (isP1Turn) {
-    perf.p1.cpuTimeSeconds += elapsed;
-  } else {
-    perf.p2.cpuTimeSeconds += elapsed;
-  }
-
-  if (moveId == -1 || !is_valid(state, moveId)) {
-    return -1;
-  }
-
-  boardState nextState = apply_move(state, moveId);
-  if (nextState.activeCaptureIdx == -1) {
-    state = flip_board(nextState);
-    isP1Turn = !isP1Turn;
-  } else {
-    state = nextState;
-  }
-  return moveId;
-}
-
-/**
- * @brief Helper to determine the game winner based on the active player and game status.
- */
-[[nodiscard]] constexpr GameResult determine_winner(GameStatus status, bool isP1Turn) noexcept {
-  if (status == GameStatus::ME_WINS_ELIMINATION || status == GameStatus::ME_WINS_STALEMATE) {
-    return isP1Turn ? GameResult::P1_WINS : GameResult::P2_WINS;
-  }
-  return isP1Turn ? GameResult::P2_WINS : GameResult::P1_WINS;
-}
+void save_game_parquet(std::string_view player1Name,
+                       std::string_view player2Name,
+                       int gameIdx,
+                       const GameOutcome& outcome,
+                       const std::vector<TurnRecord>& history);
 
 /**
  * @brief Thread-local accumulator for win statistics.
@@ -210,43 +161,226 @@ constexpr void record_outcome(const GameOutcome& outcome, LocalWins& localWins) 
 }
 
 /**
+ * @brief Helper to query the player move choice.
+ */
+constexpr int get_player_move(
+    const Player& player1, const Player& player2, bool isP1Turn, const boardState& state, u64& moveNodes) noexcept {
+  if (isP1Turn) {
+    return player1.select(state, moveNodes);
+  }
+  return player2.select(state, moveNodes);
+}
+
+/**
+ * @brief Helper to update telemetry performance statistics (visited nodes and CPU time).
+ */
+constexpr void update_perf_stats(GamePerf& perf,
+                                 bool isP1Turn,
+                                 u64 moveNodes,  // NOLINT(bugprone-easily-swappable-parameters)
+                                 double elapsed) noexcept {
+  if (isP1Turn) {
+    perf.p1.nodes += moveNodes;
+    perf.p1.cpuTimeSeconds += elapsed;
+  } else {
+    perf.p2.nodes += moveNodes;
+    perf.p2.cpuTimeSeconds += elapsed;
+  }
+}
+
+/**
+ * @brief Helper to advance turn state after a move.
+ */
+constexpr void advance_turn_state(boardState& state, bool& isP1Turn, const boardState& nextState) noexcept {
+  if (nextState.activeCaptureIdx == -1) {
+    state = flip_board(nextState);
+    isP1Turn = !isP1Turn;
+  } else {
+    state = nextState;
+  }
+}
+
+/**
+ * @brief Helper function to execute a single move and record metrics.
+ * @return The move ID played, or -1 if invalid or error.
+ */
+inline int execute_move(boardState& state,
+                        bool& isP1Turn,
+                        const Player& player1,
+                        const Player& player2,
+                        GamePerf& perf,
+                        bool forceRandom = false) {
+  int moveId = -1;
+  u64 moveNodes = 0;
+
+  auto startTime = std::chrono::high_resolution_clock::now();
+  if (forceRandom) {
+    moveId = kribu::player::select_random(state, moveNodes);
+  } else {
+    moveId = get_player_move(player1, player2, isP1Turn, state, moveNodes);
+  }
+  auto endTime = std::chrono::high_resolution_clock::now();
+  double elapsed = std::chrono::duration<double>(endTime - startTime).count();
+
+  update_perf_stats(perf, isP1Turn, moveNodes, elapsed);
+
+  if (moveId == -1 || !is_valid(state, moveId)) {
+    return -1;
+  }
+
+  advance_turn_state(state, isP1Turn, apply_move(state, moveId));
+  return moveId;
+}
+
+/**
+ * @brief Helper to count the occurrences of a board state hash in game history.
+ */
+inline int count_repetitions(u64 hash) noexcept {
+  if (maxRepetitions <= 0) {
+    return 0;
+  }
+  int repetitions = 0;
+  for (u64 prevHash : currentGameHistory) {
+    if (prevHash == hash) {
+      repetitions++;
+    }
+  }
+  return repetitions;
+}
+
+/**
+ * @brief Helper to record history hash.
+ */
+inline void record_history_hash(u64 hash) noexcept {
+  if (maxRepetitions > 0) {
+    currentGameHistory.push_back(hash);
+  }
+}
+
+/**
+ * @brief Helper to handle game over scenario, determining the winner and win reason.
+ */
+constexpr GameOutcome handle_game_over(GameStatus status, bool isP1Turn) noexcept {
+  bool meWins = (status == GameStatus::ME_WINS_ELIMINATION || status == GameStatus::ME_WINS_STALEMATE);
+  GameResult result = (meWins == isP1Turn) ? GameResult::P1_WINS : GameResult::P2_WINS;
+
+  bool elimination = (status == GameStatus::ME_WINS_ELIMINATION || status == GameStatus::OPP_WINS_ELIMINATION);
+  WinReason reason = elimination ? WinReason::ELIMINATION : WinReason::STALEMATE;
+
+  return GameOutcome{.result = result, .reason = reason};
+}
+
+/**
+ * @brief Helper to handle invalid move scenario.
+ */
+constexpr GameOutcome handle_invalid_move(bool isP1Turn) noexcept {
+  GameResult res = isP1Turn ? GameResult::P2_WINS : GameResult::P1_WINS;
+  return GameOutcome{.result = res, .reason = WinReason::INVALID_MOVE};
+}
+
+/**
+ * @brief Helper to compute and set victory margin (difference in piece count).
+ */
+inline void set_win_margin(GameOutcome& outcome, const boardState& state, bool isP1Turn) noexcept {
+  if (outcome.result == GameResult::DRAW) {
+    outcome.winMargin = 0;
+    return;
+  }
+  int p1Pieces = isP1Turn ? piece_count(state.me) : piece_count(state.opp);
+  int p2Pieces = isP1Turn ? piece_count(state.opp) : piece_count(state.me);
+
+  if (outcome.result == GameResult::P1_WINS) {
+    outcome.winMargin = p1Pieces - p2Pieces;
+  } else {
+    outcome.winMargin = p2Pieces - p1Pieces;
+  }
+}
+
+/**
+ * @brief Computes the number of consecutive forced random turns to play to escape a repetition loop.
+ */
+constexpr int calculate_forced_random_turns(int repetitions) noexcept {
+  // Option 1: Linear scaling
+  // return (repetitions - 1) * 2;
+
+  // Option 2: Quadratic scaling
+  return (repetitions - 1) * (repetitions - 1) * 2;
+
+  // Option 3: Exponential scaling (power of 2)
+  // return (1 << (repetitions - 1));
+
+  // Option 4: Constant scaling
+  return 4;
+}
+
+/**
+ * @brief Checks if the number of repetitions has reached the limit.
+ * @param repetitions The current repetition count.
+ * @return True if the limit is reached, false otherwise.
+ */
+inline bool is_repetition_limit_reached(int repetitions) noexcept {
+  return repetitions >= maxRepetitions - 1;
+}
+
+/**
  * @brief Plays a single game between two players, saving turn history.
  */
-constexpr GameOutcome play_single_game(const Player& player1,
-                                       const Player& player2,
-                                       bool p1StartsFirst,
-                                       GamePerf& perf,
-                                       int maxTurns,
-                                       std::vector<TurnRecord>& history) {
+inline GameOutcome play_single_game(const Player& player1,
+                                    const Player& player2,
+                                    bool p1StartsFirst,
+                                    GamePerf& perf,
+                                    int maxTurns,
+                                    std::vector<TurnRecord>& history) {
   boardState state = INITIAL_STATE;
   int turnCount = 0;
   bool isP1Turn = p1StartsFirst;
+  int forcedRandomTurnsLeft = 0;
+
+  currentGameHistory.clear();
 
   history.clear();
   history.reserve(static_cast<std::size_t>(maxTurns));
 
   while (turnCount < maxTurns) {
-    GameStatus status = get_game_status(state);
-    if (status != GameStatus::ONGOING) {
-      GameResult res = determine_winner(status, isP1Turn);
-      WinReason reason = (status == GameStatus::ME_WINS_ELIMINATION || status == GameStatus::OPP_WINS_ELIMINATION)
-                             ? WinReason::ELIMINATION
-                             : WinReason::STALEMATE;
-      return GameOutcome{.result = res, .reason = reason};
+    int repetitions = count_repetitions(state.hash);
+    if (is_repetition_limit_reached(repetitions)) {
+      if (!allowRepetition) {
+        return GameOutcome{.result = GameResult::DRAW, .reason = WinReason::REPETITION};
+      }
     }
 
-    TurnRecord record;
-    record.state = state;
-    record.isP1Turn = isP1Turn;
-    record.possibleMoves = all_possible_moves(state);
+    if (repetitions >= 2 && allowRepetition) {
+      // Scale consecutive random moves with repetition depth (e.g. 2 for first rep, 4 for second, etc.)
+      forcedRandomTurnsLeft = std::max(forcedRandomTurnsLeft, calculate_forced_random_turns(repetitions));
+    }
+    record_history_hash(state.hash);
 
-    int moveId = execute_move(state, isP1Turn, player1, player2, perf);
+    GameStatus status = get_game_status(state);
+    if (status != GameStatus::ONGOING) {
+      GameOutcome outcome = handle_game_over(status, isP1Turn);
+      set_win_margin(outcome, state, isP1Turn);
+      return outcome;
+    }
+
+    TurnRecord record{.state = state,
+                      .isP1Turn = isP1Turn,
+                      .chosenMove = -1,
+                      .possibleMoves = all_possible_moves(state),
+                      .playerPlayed = ""};
+
+    bool forceRandom = (forcedRandomTurnsLeft > 0);
+    if (forcedRandomTurnsLeft > 0) {
+      forcedRandomTurnsLeft--;
+    }
+
+    int moveId = execute_move(state, isP1Turn, player1, player2, perf, forceRandom);
     if (moveId == -1) {
-      GameResult res = isP1Turn ? GameResult::P2_WINS : GameResult::P1_WINS;
-      return GameOutcome{.result = res, .reason = WinReason::INVALID_MOVE};
+      GameOutcome outcome = handle_invalid_move(isP1Turn);
+      set_win_margin(outcome, state, isP1Turn);
+      return outcome;
     }
 
     record.chosenMove = moveId;
+    record.playerPlayed = forceRandom ? "ForcedRandom" : (isP1Turn ? player1.name : player2.name);
     history.push_back(record);
     turnCount++;
   }
@@ -255,28 +389,8 @@ constexpr GameOutcome play_single_game(const Player& player1,
 }
 
 /**
- * @brief Plays a single game between two players (without history tracking).
- */
-constexpr GameOutcome play_single_game(
-    const Player& player1, const Player& player2, bool p1StartsFirst, GamePerf& perf, int maxTurns) {
-  std::vector<TurnRecord> dummy;
-  return play_single_game(player1, player2, p1StartsFirst, perf, maxTurns, dummy);
-}
-
-/**
- * @brief Saves a completed game dataset directly to a Parquet file.
- * @details Implemented in benchmark_main.cpp using Apache Arrow.
- */
-void save_game_parquet(std::string_view player1Name,
-                       std::string_view player2Name,
-                       int gameIdx,
-                       const GameOutcome& outcome,
-                       const std::vector<TurnRecord>& history);
-
-/**
  * @brief Runs a tournament matchup between two players in a multithreaded fashion.
  */
-// TODO: make sure to add the last wining board state
 inline MatchStats run_matchup_multithreaded(const Player& player1,
                                             const Player& player2,
                                             const TournamentConfig& config) {

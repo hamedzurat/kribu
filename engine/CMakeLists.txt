@@ -2,9 +2,21 @@
 add_library(kribu_engine INTERFACE)
 target_include_directories(kribu_engine INTERFACE include)
 
-# Position independent code is required for linking into Python shared libraries
-# (.so) set_target_properties(kribu_engine PROPERTIES POSITION_INDEPENDENT_CODE
-# ON)
+# Setup CPM packages
+cpmaddpackage(
+  NAME
+  eve
+  GITHUB_REPOSITORY
+  jfalcou/eve
+  VERSION
+  2023.02.15
+  OPTIONS
+  "EVE_BUILD_TEST OFF"
+  "EVE_BUILD_DOCUMENTATION OFF"
+  GIT_SHALLOW
+  1)
+
+target_link_libraries(kribu_engine INTERFACE eve::eve)
 
 # Setup Catch2 tests using CPM
 cpmaddpackage(

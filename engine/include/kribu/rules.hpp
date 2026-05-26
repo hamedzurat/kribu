@@ -9,10 +9,28 @@
 
 #include <array>
 #include <bit>
+#include <eve/eve.hpp>
+#include <eve/module/core.hpp>
 #include <stdexcept>
+#include <type_traits>
+#include <vector>
 
 #include "board.hpp"
 #include "types.hpp"
+#include "zobrist.hpp"
+
+namespace kribu {
+/**
+ * @brief Thread-local configuration for maximum allowed repetitions before a draw is declared.
+ */
+inline int maxRepetitions = 4;
+inline bool allowRepetition = true;
+
+/**
+ * @brief Thread-local record of Zobrist hashes in the current game to detect repetitions.
+ */
+inline thread_local std::vector<u64> currentGameHistory;
+}  // namespace kribu
 
 /**
  * @namespace kribu::sholoGuti
@@ -106,7 +124,10 @@ struct MoveList {
  * @return Count of set bits (pieces).
  */
 [[nodiscard]] constexpr i32 piece_count(u64 mask) noexcept {
-  return static_cast<i32>(std::popcount(mask));
+  if (std::is_constant_evaluated()) {
+    return static_cast<i32>(std::popcount(mask));
+  }
+  return static_cast<i32>(eve::popcount(mask));
 }
 
 /**
@@ -185,6 +206,8 @@ struct MoveList {
     flipped.me |= (1ULL << FLIP_MAP[std::countr_zero(bits)]);
   }
 
+  flipped.hash = kribu::zobrist::compute_hash(
+      {.activePlayer = flipped.me, .opponentPlayer = flipped.opp, .activeCaptureIdx = flipped.activeCaptureIdx});
   return flipped;
 }
 
@@ -307,6 +330,10 @@ struct MoveList {
   boardState next = state;
 
   if (moveId == END_CHAIN_MOVE) {
+    if (state.activeCaptureIdx != -1) {
+      next.hash ^= kribu::zobrist::KEYS.activeCapture[state.activeCaptureIdx];
+      next.hash ^= kribu::zobrist::KEYS.activeCapture[37];
+    }
     next.activeCaptureIdx = -1;
     return next;
   }
@@ -319,11 +346,28 @@ struct MoveList {
   // - |= sets the bit at mov.to, putting the piece in its new position in next.me.
   next.me |= (1ULL << mov.to);
 
+  // Update hash for moving active piece
+  next.hash ^= kribu::zobrist::KEYS.me[mov.from];
+  next.hash ^= kribu::zobrist::KEYS.me[mov.to];
+
   if (is_capture_move(moveId)) {
     // - clears the opponent's captured piece by anding with the bitwise negation of the captured index mask.
     next.opp &= ~(1ULL << mov.captured);
-    next.activeCaptureIdx = can_continue_capturing(next, mov.to) ? mov.to : static_cast<i8>(-1);
+    next.hash ^= kribu::zobrist::KEYS.opp[mov.captured];
+
+    i8 nextCaptureIdx = can_continue_capturing(next, mov.to) ? mov.to : static_cast<i8>(-1);
+
+    int oldCap = (state.activeCaptureIdx == -1) ? 37 : state.activeCaptureIdx;
+    int newCap = (nextCaptureIdx == -1) ? 37 : nextCaptureIdx;
+    next.hash ^= kribu::zobrist::KEYS.activeCapture[oldCap];
+    next.hash ^= kribu::zobrist::KEYS.activeCapture[newCap];
+
+    next.activeCaptureIdx = nextCaptureIdx;
   } else {
+    int oldCap = (state.activeCaptureIdx == -1) ? 37 : state.activeCaptureIdx;
+    next.hash ^= kribu::zobrist::KEYS.activeCapture[oldCap];
+    next.hash ^= kribu::zobrist::KEYS.activeCapture[37];
+
     next.activeCaptureIdx = -1;
   }
 

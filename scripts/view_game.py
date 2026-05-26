@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 from rich.table import Table
+from rich.columns import Columns
 import pyarrow.parquet as pq
 
 # Add python/src to PYTHONPATH dynamically so we can import kribu
@@ -155,18 +156,41 @@ def select_game_from_manifest(console: Console) -> str:
         console.print("[bold yellow]Manifest is empty. No games simulated yet.[/bold yellow]")
         sys.exit(0)
 
-    table = Table(title="Simulated Benchmark Games", header_style="bold yellow")
-    table.add_column("No.", justify="right", style="cyan")
-    table.add_column("Player 1 (Green)", style="green")
-    table.add_column("Player 2 (Red)", style="red")
-    table.add_column("Outcome", style="magenta")
-    table.add_column("Reason", style="blue")
-    table.add_column("Turns", justify="right", style="white")
+    # Split the games list to render two tables side-by-side
+    num_cols = 3
+    chunk_size = (len(games) + num_cols - 1) // num_cols
+    tables = []
 
-    for idx, g in enumerate(games):
-        table.add_row(str(idx + 1), g["p1Name"], g["p2Name"], g["outcome"], g["reason"], str(g["totalTurns"]))
+    for col_idx in range(num_cols):
+        start_idx = col_idx * chunk_size
+        end_idx = min(start_idx + chunk_size, len(games))
+        if start_idx >= len(games):
+            break
 
-    console.print(table)
+        table = Table(title=f"Games {start_idx + 1} - {end_idx}", header_style="bold yellow", expand=True)
+        table.add_column("No.", justify="right", style="cyan")
+        table.add_column("Player 1 (Green)", style="green")
+        table.add_column("Player 2 (Red)", style="red")
+        table.add_column("Reason", style="blue")
+        table.add_column("Turns", justify="right", style="white")
+        table.add_column("Win By", justify="right", style="yellow")
+
+        for idx in range(start_idx, end_idx):
+            g = games[idx]
+            p1_suffix = " *" if g.get("outcome") == "P1_WINS" else ""
+            p2_suffix = " *" if g.get("outcome") == "P2_WINS" else ""
+            win_by = str(g.get("winMargin", 0)) if g.get("outcome") != "DRAW" else "-"
+            table.add_row(
+                str(idx + 1),
+                g["p1Name"] + p1_suffix,
+                g["p2Name"] + p2_suffix,
+                g["reason"],
+                str(g["totalTurns"]),
+                win_by,
+            )
+        tables.append(table)
+
+    console.print(Columns(tables, equal=True, expand=True))
 
     while True:
         try:
@@ -209,6 +233,7 @@ def main():
     outcome = meta.get("outcome", "N/A")
     reason = meta.get("reason", "N/A")
     total_turns = int(meta.get("totalTurns", 0))
+    win_margin = meta.get("winMargin", "0")
 
     # Read column vectors
     me_col = table.column("me").to_pylist()
@@ -217,6 +242,7 @@ def main():
     is_p1_turn_col = table.column("isP1Turn").to_pylist()
     chosen_move_col = table.column("chosenMove").to_pylist()
     possible_moves_col = table.column("possibleMoves").to_pylist()
+    player_played_col = table.column("playerPlayed").to_pylist()
 
     turn_idx = 0
     actual_length = len(me_col)
@@ -248,6 +274,8 @@ def main():
         header_text.append(" vs ", style="white")
         header_text.append(f"{p2_name} (P2/Red)\n", style="red")
         header_text.append(f"Result: {outcome} ({reason})", style="bold magenta")
+        if outcome != "DRAW":
+            header_text.append(f" | Margin: Winner by {win_margin} pieces", style="bold yellow")
 
         console.print(Panel(header_text, border_style="cyan"))
 
@@ -268,6 +296,7 @@ def main():
         info_table.add_row(
             "Active Turn:", f"[bold {active_player_color}]{active_player_name}[/bold {active_player_color}]"
         )
+        info_table.add_row("Move Decided By:", f"[bold magenta]{player_played_col[turn_idx]}[/bold magenta]")
         info_table.add_row("Green Pieces Remaining (P1):", f"[green]{count_bits(green_mask)}[/green]")
         info_table.add_row("Red Pieces Remaining (P2):", f"[red]{count_bits(red_mask)}[/red]")
 

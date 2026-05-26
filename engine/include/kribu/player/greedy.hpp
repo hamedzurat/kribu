@@ -18,13 +18,13 @@ using namespace kribu::sholoGuti;
 
 /**
  * @brief Selects a move using a template greedy strategy with a custom heuristic.
- * @tparam EvalFunc Functor or function type evaluating the board state.
+ * @tparam EvalFunc Heuristic function evaluating the board state.
  * @param state Current board state.
  * @param nodes Out-parameter tracking explored states.
  * @return The selected move ID.
  * @throws std::runtime_error if no moves are available.
  */
-template <typename EvalFunc>
+template <auto EvalFunc>
 [[nodiscard]] constexpr int greedy_player_maker(const boardState& state, u64& nodes) {
   const MoveList moves = all_possible_moves(state);
   if (moves.empty()) {
@@ -38,9 +38,9 @@ template <typename EvalFunc>
     const boardState next = apply_move(state, moveId);
     i32 val = 0;
     if (next.activeCaptureIdx == -1) {
-      val = -EvalFunc{}(flip_board(next));
+      val = -EvalFunc(flip_board(next));
     } else {
-      val = EvalFunc{}(next);
+      val = EvalFunc(next);
     }
     if (val > bestVal) {
       bestVal = val;

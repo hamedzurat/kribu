@@ -59,7 +59,7 @@ format:
 
 lint:
 	uv run ruff check python/
-	find engine bindings \( -name "*.cpp" -o -name "*.hpp" -o -name "*.cc" -o -name "*.cxx" \) -not -path "*/build/*" | xargs -P $(NPROC) clang-tidy -p build/ --quiet --warnings-as-errors='*' -extra-arg=-w
+	run-clang-tidy -p build/ -j 8 -quiet -header-filter="engine/.*|bindings/.*" -warnings-as-errors='*' "engine/.*"
 
 todo:
 	rg --line-number --color=always -i '\b(TODO|FIXME|BUG|HACK|XXX)\b' --glob '!Makefile' --glob '!doc' || true

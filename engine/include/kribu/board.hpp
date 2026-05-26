@@ -16,6 +16,7 @@
 #include <tuple>
 #include <utility>
 
+#include "kribu/zobrist.hpp"
 #include "types.hpp"
 
 /**
@@ -51,14 +52,23 @@ struct boardState {
   i8 activeCaptureIdx = -1;
 
   /**
+   * @brief Incremental Zobrist hash key representing the board state.
+   */
+  u64 hash = 0;
+
+  /**
    * @brief Compares two board states for exact equality of piece placements and capture states.
    * @param other The board state to compare against.
    * @return True if both player masks and active capture indices are identical, false otherwise.
    */
   bool operator==(const boardState& other) const {
-    return me == other.me && opp == other.opp && activeCaptureIdx == other.activeCaptureIdx;
+    return hash == other.hash && me == other.me && opp == other.opp && activeCaptureIdx == other.activeCaptureIdx;
   }
 };
+
+}  // namespace kribu::board
+
+namespace kribu::board {
 
 /**
  * @brief The standard initial layout of a Sholo Guti board.
@@ -72,6 +82,8 @@ constexpr boardState INITIAL_STATE{
     .me = 0x0000'001F'FFE0'0000ULL,   // Bits 21-36
     .opp = 0x0000'0000'0000'FFFFULL,  // Bits 0-15
     .activeCaptureIdx = -1,
+    .hash = kribu::zobrist::compute_hash(
+        {.activePlayer = 0x0000'001F'FFE0'0000ULL, .opponentPlayer = 0x0000'0000'0000'FFFFULL, .activeCaptureIdx = -1}),
 };
 
 /**

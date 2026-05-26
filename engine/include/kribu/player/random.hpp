@@ -22,19 +22,6 @@ using namespace kribu::sholoGuti;
  * @param nodes Out-parameter tracking explored states (set to 1).
  * @return The selected move ID, or -1 if no moves are available.
  */
-namespace detail {
-/**
- * @brief Thread-local random number generator seeded once per thread.
- */
-inline thread_local std::mt19937 rng{std::random_device{}()};
-}  // namespace detail
-
-/**
- * @brief Selects a random move from the valid move list.
- * @param state Current board state.
- * @param nodes Out-parameter tracking explored states (set to 1).
- * @return The selected move ID, or -1 if no moves are available.
- */
 inline int select_random(const boardState& state, u64& nodes) {
   nodes = 1;
   const MoveList moves = all_possible_moves(state);
@@ -42,7 +29,7 @@ inline int select_random(const boardState& state, u64& nodes) {
     return -1;
   }
   std::uniform_int_distribution<int> dist(0, moves.size() - 1);
-  return moves.moves[dist(detail::rng)];
+  return moves.moves[dist(rng)];
 }
 
 }  // namespace kribu::player

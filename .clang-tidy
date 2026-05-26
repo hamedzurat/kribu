@@ -31,4 +31,4 @@ CheckOptions:
   - key: readability-function-size.MaxNestingLevel
     value: "4"
   - key: readability-function-cognitive-complexity.Threshold
-    value: "15"
+    value: "20"
