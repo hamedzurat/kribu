@@ -1,4 +1,4 @@
-.PHONY: setup build release hot-build test test-cpp test-python clean format lint run doc doc-view generate train
+.PHONY: setup build release hot-build test test-cpp test-python clean format lint run benchmark view-benchmark doc doc-view generate train todo
 
 # Detect number of processors for parallel execution
 NPROC := $(shell nproc)
@@ -19,7 +19,7 @@ build:
 	uv run cmake --build build -j$(NPROC)
 
 release:
-	trash build_release || true
+# 	trash build_release || true
 	uv run cmake -B build_release -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$(PREFIX)
 	uv run cmake --build build_release -j$(NPROC)
 	uv run cmake --install build_release
@@ -39,6 +39,12 @@ test-python:
 run:
 	PYTHONPATH=python/src uv run python python/src/kribu/main.py
 
+benchmark: release
+	./build_release/engine/benchmark/kribu_benchmark_main
+
+view-benchmark:
+	PYTHONPATH=python/src uv run python3 scripts/view_game.py $(FILE)
+
 generate:
 	PYTHONPATH=python/src uv run python python/src/kribu/generate_dataset.py --games 50 --output dataset.parquet --depth 4
 
@@ -54,6 +60,9 @@ format:
 lint:
 	uv run ruff check python/
 	find engine bindings \( -name "*.cpp" -o -name "*.hpp" -o -name "*.cc" -o -name "*.cxx" \) -not -path "*/build/*" | xargs -P $(NPROC) clang-tidy -p build/ --quiet --warnings-as-errors='*' -extra-arg=-w
+
+todo:
+	rg --line-number --color=always -i '\b(TODO|FIXME|BUG|HACK|XXX)\b' --glob '!Makefile' --glob '!doc' || true
 
 clean:
 	git clean -Xdf

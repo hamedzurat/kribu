@@ -5,15 +5,16 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <kribu/board.hpp>
-#include <kribu/minimax.hpp>
+#include <kribu/heuristic.hpp>
+#include <kribu/player/minimax.hpp>
 #include <kribu/rules.hpp>
 
 using namespace kribu::board;
-using namespace kribu::sholoGuti;
+using namespace kribu::player;
 
 TEST_CASE("Minimax Initial State Evaluation", "[minimax]") {  // NOLINT(readability-function-cognitive-complexity)
   boardState state = INITIAL_STATE;
-  REQUIRE(evaluate_board(state) == 0);
+  REQUIRE(kribu::heuristics::evaluate_by_node_values<kribu::heuristics::HEURISTIC_NODE_WEIGHTS>(state) == -1135);
 }
 
 TEST_CASE("Minimax Terminal State Evaluation", "[minimax]") {  // NOLINT(readability-function-cognitive-complexity)

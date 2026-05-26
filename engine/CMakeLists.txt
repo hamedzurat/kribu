@@ -26,3 +26,5 @@ target_link_libraries(kribu_engine_tests PRIVATE kribu_engine
 list(APPEND CMAKE_MODULE_PATH ${Catch2_SOURCE_DIR}/extras)
 include(Catch)
 catch_discover_tests(kribu_engine_tests)
+
+add_subdirectory(benchmark)

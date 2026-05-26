@@ -8,14 +8,14 @@
 
 #include <cstddef>
 #include <kribu/board.hpp>
-#include <kribu/minimax.hpp>
+#include <kribu/player/minimax.hpp>
 #include <kribu/rules.hpp>
 #include <kribu/types.hpp>
 #include <vector>
 
 namespace nb = nanobind;
 using namespace kribu::board;
-using namespace kribu::sholoGuti;
+using namespace kribu::player;
 
 /**
  * @brief Converts a MoveList to a std::vector<int> for Python interop.
@@ -32,12 +32,6 @@ static std::vector<int> all_possible_moves_py(const boardState& state) {
   return result;
 }
 
-/**
- * @brief Helper function to run minimax search with default infinity bounds.
- * @param state Current board state.
- * @param depth Search depth limit.
- * @return MinimaxResult structure with the best evaluation score and move ID.
- */
 static MinimaxResult minimax_py(const boardState& state, int depth) {
   return minimax(state, depth, -INFINITY_VAL, INFINITY_VAL);
 }
@@ -69,9 +63,11 @@ NB_MODULE(kribu_ext, module) {  // NOLINT(readability-identifier-length, moderni
       .def_rw("captured", &move::captured);
 
   nb::enum_<GameStatus>(module, "GameStatus")
-      .value("OPP_WINS", GameStatus::OPP_WINS)
+      .value("OPP_WINS_ELIMINATION", GameStatus::OPP_WINS_ELIMINATION)
+      .value("OPP_WINS_STALEMATE", GameStatus::OPP_WINS_STALEMATE)
       .value("ONGOING", GameStatus::ONGOING)
-      .value("ME_WINS", GameStatus::ME_WINS)
+      .value("ME_WINS_STALEMATE", GameStatus::ME_WINS_STALEMATE)
+      .value("ME_WINS_ELIMINATION", GameStatus::ME_WINS_ELIMINATION)
       .export_values();
 
   module.attr("INITIAL_STATE") = INITIAL_STATE;

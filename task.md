@@ -1,21 +1,21 @@
 # tasks
 
 - [ ] rule engine
-  - [ ] define nodes, edges, adjaceny list, move table
-  - [ ] basic implementation
-    - [ ] fn isValid()
-    - [ ] fn allPossibleoves()
+  - [x] define nodes, edges, adjaceny list, move table
+  - [x] basic implementation
+    - [x] fn isValid()
+    - [x] fn allPossiblemoves()
   - [ ] implement SIMD
 - [ ] GUI
 - [ ] Heuristic Teachers
-  - [ ] Alpha-Beta Minimax
+  - [/] Alpha-Beta Minimax
     - [ ] implement parallel searching
     - [ ] heuristic()
   - [ ] Alpha-Beta Minimax + bit of random moves
   - [ ] MCTS
-- [ ] Supervised Training
-  - [ ] Generate data based on Teachers playing each other
-  - [ ] Train Policy/Value network
+- [x] Supervised Training
+  - [x] Generate data based on Teachers playing each other
+  - [x] Train Policy/Value network
 - [ ] Reinforcement Learning (Expert Iteration)
   - [ ] Policy/Value-Guided MCTS
   - [ ] self-play data via NN-MCTS -> Retrain Network -> Repeat

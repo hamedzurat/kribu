@@ -180,7 +180,7 @@ def play_game(user_role: str, search_depth: int, ai_type: str):
             console.print("\n" + "=" * 50)
             console.print(render_board(state))
             console.print("\n")
-            if status == kribu.GameStatus.ME_WINS:
+            if status in (kribu.GameStatus.ME_WINS_ELIMINATION, kribu.GameStatus.ME_WINS_STALEMATE):
                 console.print(
                     Panel(
                         Text(
@@ -494,9 +494,9 @@ def run_simulation():
     console.print(f"Is game over on capture chain board? [green]{isGameOver}[/green]")
     winnerStr = (
         "Me"
-        if status == kribu.GameStatus.ME_WINS
+        if status in (kribu.GameStatus.ME_WINS_ELIMINATION, kribu.GameStatus.ME_WINS_STALEMATE)
         else "Opponent"
-        if status == kribu.GameStatus.OPP_WINS
+        if status in (kribu.GameStatus.OPP_WINS_ELIMINATION, kribu.GameStatus.OPP_WINS_STALEMATE)
         else "No one (game not over)"
     )
     console.print(f"Winner: [bold green]{winnerStr}[/bold green]")

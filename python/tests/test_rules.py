@@ -109,7 +109,7 @@ def test_stalemate_condition():
     moves = all_possible_moves(state)
     assert len(moves) == 0
     assert is_game_over(state)
-    assert get_winner(state) == -1  # I have no moves, I lose
+    assert get_winner(state) == -2  # I have no moves, I lose (stalemate)
 
 
 def test_win_condition():

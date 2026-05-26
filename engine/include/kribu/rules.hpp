@@ -28,9 +28,14 @@ using namespace kribu::board;
  */
 enum class GameStatus : i8 {
   /**
-   * @brief Opponent has won the game (active player has lost all pieces or has no moves left).
+   * @brief Opponent has won because the active player has no moves left (stalemate).
    */
-  OPP_WINS = -1,
+  OPP_WINS_STALEMATE = -2,
+
+  /**
+   * @brief Opponent has won because the active player has lost all pieces.
+   */
+  OPP_WINS_ELIMINATION = -1,
 
   /**
    * @brief Game is still active and ongoing.
@@ -38,9 +43,14 @@ enum class GameStatus : i8 {
   ONGOING = 0,
 
   /**
-   * @brief Active player (me) has won the game (opponent has lost all pieces or has no moves left).
+   * @brief Active player (me) has won because the opponent has lost all pieces.
    */
-  ME_WINS = 1,
+  ME_WINS_ELIMINATION = 1,
+
+  /**
+   * @brief Active player (me) has won because the opponent has no moves left (stalemate).
+   */
+  ME_WINS_STALEMATE = 2,
 };
 
 /**
@@ -63,19 +73,19 @@ struct MoveList {
    * @brief Appends a move ID to the list.
    * @param moveId The ID of the move to append.
    */
-  void push(i16 moveId) noexcept { moves[count++] = moveId; }
+  constexpr void push(i16 moveId) noexcept { moves[count++] = moveId; }
 
   /**
    * @brief Returns a pointer to the beginning of the list.
    * @return Const iterator pointer to the first element.
    */
-  [[nodiscard]] const i16* begin() const noexcept { return moves.data(); }
+  [[nodiscard]] constexpr const i16* begin() const noexcept { return moves.data(); }
 
   /**
    * @brief Returns a pointer to the end of the list.
    * @return Const iterator pointer to one-past-the-last element.
    */
-  [[nodiscard]] const i16* end() const noexcept { return moves.data() + count; }
+  [[nodiscard]] constexpr const i16* end() const noexcept { return moves.data() + count; }
 
   /**
    * @brief Checks if the list is empty.
@@ -95,7 +105,7 @@ struct MoveList {
  * @param mask Bitmask representing player pieces.
  * @return Count of set bits (pieces).
  */
-[[nodiscard]] inline i32 piece_count(u64 mask) noexcept {
+[[nodiscard]] constexpr i32 piece_count(u64 mask) noexcept {
   return static_cast<i32>(std::popcount(mask));
 }
 
@@ -105,7 +115,7 @@ struct MoveList {
  * @return Decoded Move struct.
  * @throws std::out_of_range If moveId is invalid.
  */
-[[nodiscard]] inline move decode_move(int moveId) {
+[[nodiscard]] constexpr move decode_move(int moveId) {
   if (moveId < 0 || moveId >= TOTAL_MOVE_COUNT) {
     throw std::out_of_range("Invalid move ID");
   }
@@ -117,7 +127,7 @@ struct MoveList {
  * @param moveId Move ID to check.
  * @return True if it is a simple move, false otherwise.
  */
-[[nodiscard]] inline bool is_simple_move(int moveId) noexcept {
+[[nodiscard]] constexpr bool is_simple_move(int moveId) noexcept {
   return moveId > END_CHAIN_MOVE && moveId <= NUM_SIMPLE_MOVES;
 }
 
@@ -126,7 +136,7 @@ struct MoveList {
  * @param moveId Move ID to check.
  * @return True if it is a capture move, false otherwise.
  */
-[[nodiscard]] inline bool is_capture_move(int moveId) noexcept {
+[[nodiscard]] constexpr bool is_capture_move(int moveId) noexcept {
   return moveId > NUM_SIMPLE_MOVES && moveId < TOTAL_MOVE_COUNT;
 }
 
@@ -136,7 +146,7 @@ struct MoveList {
  * @param dst  Destination node index.
  * @return The move ID, or -1 if no such move exists in the static move table.
  */
-[[nodiscard]] inline int find_move(i8 from, i8 dst) noexcept {
+[[nodiscard]] constexpr int find_move(i8 from, i8 dst) noexcept {
   if (from < 0 || from >= NUM_NODES || dst < 0 || dst >= NUM_NODES) {
     return -1;
   }
@@ -149,7 +159,7 @@ struct MoveList {
  * @param state Current BoardState.
  * @return Mirrored BoardState.
  */
-[[nodiscard]] inline boardState flip_board(const boardState& state) noexcept {
+[[nodiscard]] constexpr boardState flip_board(const boardState& state) noexcept {
   constexpr std::array<i8, NUM_NODES> FLIP_MAP = {36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24,
                                                   23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11,
                                                   10, 9,  8,  7,  6,  5,  4,  3,  2,  1,  0};
@@ -186,7 +196,7 @@ struct MoveList {
  * @param moveId Move ID to validate.
  * @return True if the move is legal, false otherwise.
  */
-[[nodiscard]] inline bool is_valid(const boardState& state, int moveId) noexcept {
+[[nodiscard]] constexpr bool is_valid(const boardState& state, int moveId) noexcept {
   if (moveId < 0 || moveId >= TOTAL_MOVE_COUNT) {
     return false;
   }
@@ -237,7 +247,7 @@ struct MoveList {
  * @param fromNode Node where the capturing piece now resides.
  * @return True if at least one further capture is legal, false otherwise.
  */
-[[nodiscard]] inline bool can_continue_capturing(const boardState& next, i8 fromNode) noexcept {
+[[nodiscard]] constexpr bool can_continue_capturing(const boardState& next, i8 fromNode) noexcept {
   // Bitmask of all occupied nodes on the board.
   const u64 occupied = next.me | next.opp;
   // To prevent the bugprone-signed-char-misuse lint error when converting signed i8 to int,
@@ -261,7 +271,7 @@ struct MoveList {
  * @param state Current BoardState.
  * @return Stack-allocated MoveList of valid move IDs.
  */
-[[nodiscard]] inline MoveList all_possible_moves(const boardState& state) noexcept {
+[[nodiscard]] constexpr MoveList all_possible_moves(const boardState& state) noexcept {
   MoveList list;
 
   if (state.activeCaptureIdx != -1) {
@@ -293,7 +303,7 @@ struct MoveList {
  * @param moveId A valid move ID.
  * @return Resulting BoardState.
  */
-[[nodiscard]] inline boardState apply_move(const boardState& state, int moveId) noexcept {
+[[nodiscard]] constexpr boardState apply_move(const boardState& state, int moveId) noexcept {
   boardState next = state;
 
   if (moveId == END_CHAIN_MOVE) {
@@ -326,19 +336,19 @@ struct MoveList {
  * @param state Current BoardState.
  * @return GameStatus::ME_WINS, GameStatus::OPP_WINS, or GameStatus::ONGOING.
  */
-[[nodiscard]] inline GameStatus get_game_status(const boardState& state) noexcept {
+[[nodiscard]] constexpr GameStatus get_game_status(const boardState& state) noexcept {
   if (piece_count(state.opp) == 0) {
-    return GameStatus::ME_WINS;
+    return GameStatus::ME_WINS_ELIMINATION;
   }
   if (piece_count(state.me) == 0) {
-    return GameStatus::OPP_WINS;
+    return GameStatus::OPP_WINS_ELIMINATION;
   }
   if (all_possible_moves(state).empty()) {
-    return GameStatus::OPP_WINS;
+    return GameStatus::OPP_WINS_STALEMATE;
   }
   boardState flipped = flip_board(state);
   if (all_possible_moves(flipped).empty()) {
-    return GameStatus::ME_WINS;
+    return GameStatus::ME_WINS_STALEMATE;
   }
   return GameStatus::ONGOING;
 }

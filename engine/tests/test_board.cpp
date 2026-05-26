@@ -344,7 +344,7 @@ TEST_CASE("Rule Engine - Game Status", "[rules]") {  // NOLINT(readability-funct
     boardState state;
     state.me = 1U << 0;
     state.opp = 0;
-    REQUIRE(get_game_status(state) == GameStatus::ME_WINS);
+    REQUIRE(get_game_status(state) == GameStatus::ME_WINS_ELIMINATION);
     REQUIRE(get_game_status(state) != GameStatus::ONGOING);
     REQUIRE(static_cast<int>(get_game_status(state)) == 1);
   }
@@ -353,7 +353,7 @@ TEST_CASE("Rule Engine - Game Status", "[rules]") {  // NOLINT(readability-funct
     boardState state;
     state.me = 0;
     state.opp = 1U << 0;
-    REQUIRE(get_game_status(state) == GameStatus::OPP_WINS);
+    REQUIRE(get_game_status(state) == GameStatus::OPP_WINS_ELIMINATION);
     REQUIRE(static_cast<int>(get_game_status(state)) == -1);
   }
 
