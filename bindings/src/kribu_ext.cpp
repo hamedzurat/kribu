@@ -4,7 +4,7 @@
  */
 
 #include <nanobind/nanobind.h>
-#include <nanobind/stl/vector.h>  // NOLINT(misc-include-cleaner)
+#include <nanobind/stl/vector.h>
 
 #include <cstddef>
 #include <kribu/board.hpp>

@@ -19,6 +19,7 @@ Checks: >
   -readability-magic-numbers,
   -bugprone-chained-comparison,
   -portability-avoid-pragma-once,
+  -bugprone-easily-swappable-parameters,
   -system-headers=false
 
 WarningsAsErrors: ""

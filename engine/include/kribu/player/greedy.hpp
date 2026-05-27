@@ -8,6 +8,7 @@
 #include <stdexcept>
 
 #include "kribu/board.hpp"
+#include "kribu/fast_rng.hpp"
 #include "kribu/rules.hpp"
 #include "kribu/types.hpp"
 
@@ -18,6 +19,8 @@ using namespace kribu::sholoGuti;
 
 /**
  * @brief Selects a move using a template greedy strategy with a custom heuristic.
+ * @details If multiple moves share the same highest heuristic evaluation score,
+ *          one is selected uniformly at random using reservoir sampling.
  * @tparam EvalFunc Heuristic function evaluating the board state.
  * @param state Current board state.
  * @param nodes Out-parameter tracking explored states.
@@ -32,9 +35,10 @@ template <auto EvalFunc>
   }
   int bestMove = -1;
   i32 bestVal = -999999;
-  for (int i = 0; i < moves.size(); ++i) {
+  int bestCount = 0;
+  for (int idx = 0; idx < moves.size(); ++idx) {
     nodes++;
-    const int moveId = moves.moves[i];
+    const int moveId = moves.moves[idx];
     const boardState next = apply_move(state, moveId);
     i32 val = 0;
     if (next.activeCaptureIdx == -1) {
@@ -45,6 +49,12 @@ template <auto EvalFunc>
     if (val > bestVal) {
       bestVal = val;
       bestMove = moveId;
+      bestCount = 1;
+    } else if (val == bestVal) {
+      bestCount++;
+      if ((rng() % bestCount) == 0) {
+        bestMove = moveId;
+      }
     }
   }
   return bestMove;

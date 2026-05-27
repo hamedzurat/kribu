@@ -63,6 +63,7 @@ struct GameOutcome {
   GameResult result;
   WinReason reason;
   int winMargin = 0;
+  int forcedRandomTurns = 0;  ///< Number of forced random plays in this game.
 };
 
 /**
@@ -124,6 +125,7 @@ struct TournamentConfig {
   int maxTurns = 1000;
   int threadCount = 0;
   std::atomic<int>* completedGames = nullptr;
+  std::atomic<int>* globalGameId = nullptr;
 };
 
 /**
@@ -132,7 +134,7 @@ struct TournamentConfig {
  */
 void save_game_parquet(std::string_view player1Name,
                        std::string_view player2Name,
-                       int gameIdx,
+                       int gameId,
                        const GameOutcome& outcome,
                        const std::vector<TurnRecord>& history);
 
@@ -174,10 +176,7 @@ constexpr int get_player_move(
 /**
  * @brief Helper to update telemetry performance statistics (visited nodes and CPU time).
  */
-constexpr void update_perf_stats(GamePerf& perf,
-                                 bool isP1Turn,
-                                 u64 moveNodes,  // NOLINT(bugprone-easily-swappable-parameters)
-                                 double elapsed) noexcept {
+constexpr void update_perf_stats(GamePerf& perf, bool isP1Turn, u64 moveNodes, double elapsed) noexcept {
   if (isP1Turn) {
     perf.p1.nodes += moveNodes;
     perf.p1.cpuTimeSeconds += elapsed;
@@ -322,18 +321,107 @@ inline bool is_repetition_limit_reached(int repetitions) noexcept {
 }
 
 /**
+ * @brief Handles the repetition limits and sets consecutive random turns if repetition occurs.
+ * @param state The current board state.
+ * @param forcedRandomTurnsLeft Reference to the counter of forced random turns.
+ * @param outcome Reference to the GameOutcome to set in case of repetition limit.
+ * @return True if repetition limit was reached and the game should end, false otherwise.
+ */
+inline bool handle_repetition(const boardState& state, i32& forcedRandomTurnsLeft, GameOutcome& outcome) noexcept {
+  const i32 repetitions = count_repetitions(state.hash);
+  if (is_repetition_limit_reached(repetitions)) {
+    if (!allowRepetition) {
+      outcome = GameOutcome{.result = GameResult::DRAW, .reason = WinReason::REPETITION};
+      return true;
+    }
+  }
+
+  if (repetitions >= 2 && allowRepetition) {
+    forcedRandomTurnsLeft = std::max(forcedRandomTurnsLeft, calculate_forced_random_turns(repetitions));
+  }
+  record_history_hash(state.hash);
+  return false;
+}
+
+/**
+ * @brief Executes a single turn of the game, including player move choice,
+ * validation, and state progression.
+ * @param state The current board state.
+ * @param isP1Turn Reference to flag tracking if it is Player 1's turn.
+ * @param player1 The first player.
+ * @param player2 The second player.
+ * @param perf Reference to performance accumulator.
+ * @param forcedRandomTurnsLeft Reference to remaining consecutive random turns.
+ * @param history Vector tracking the game turn history.
+ * @param outcome Reference to the output game outcome if the game finishes this turn.
+ * @return True if the game is completed on this turn, false if it continues.
+ */
+inline bool play_single_turn(boardState& state,
+                             bool& isP1Turn,
+                             const Player& player1,
+                             const Player& player2,
+                             GamePerf& perf,
+                             i32& forcedRandomTurnsLeft,
+                             i32& forcedRandomTurnsCount,
+                             std::vector<TurnRecord>& history,
+                             GameOutcome& outcome) {
+  const GameStatus status = get_game_status(state);
+  if (status != GameStatus::ONGOING) {
+    outcome = handle_game_over(status, isP1Turn);
+    set_win_margin(outcome, state, isP1Turn);
+    return true;
+  }
+
+  TurnRecord record{.state = state,
+                    .isP1Turn = isP1Turn,
+                    .chosenMove = -1,
+                    .possibleMoves = all_possible_moves(state),
+                    .playerPlayed = ""};
+
+  const bool forceRandom = (forcedRandomTurnsLeft > 0);
+  if (forcedRandomTurnsLeft > 0) {
+    forcedRandomTurnsLeft--;
+    forcedRandomTurnsCount++;
+  }
+
+  const i32 moveId = execute_move(state, isP1Turn, player1, player2, perf, forceRandom);
+  if (moveId == -1) {
+    outcome = handle_invalid_move(isP1Turn);
+    set_win_margin(outcome, state, isP1Turn);
+    return true;
+  }
+
+  record.chosenMove = moveId;
+  if (forceRandom) {
+    record.playerPlayed = "ForcedRandom";
+  } else {
+    record.playerPlayed = isP1Turn ? player1.name : player2.name;
+  }
+  history.push_back(record);
+  return false;
+}
+
+/**
  * @brief Plays a single game between two players, saving turn history.
+ * @param player1 The first player.
+ * @param player2 The second player.
+ * @param p1StartsFirst True if Player 1 plays first, false if Player 2.
+ * @param perf Accumulator for timing and node counts for both players.
+ * @param maxTurns Maximum number of turns (plies) allowed before a draw is declared.
+ * @param history Output vector where each turn's state/decision is recorded.
+ * @return The outcome of the game (winner/draw and margin).
  */
 inline GameOutcome play_single_game(const Player& player1,
                                     const Player& player2,
                                     bool p1StartsFirst,
                                     GamePerf& perf,
-                                    int maxTurns,
+                                    i32 maxTurns,
                                     std::vector<TurnRecord>& history) {
   boardState state = INITIAL_STATE;
-  int turnCount = 0;
+  i32 turnCount = 0;
   bool isP1Turn = p1StartsFirst;
-  int forcedRandomTurnsLeft = 0;
+  i32 forcedRandomTurnsLeft = 0;
+  i32 forcedRandomTurnsCount = 0;
 
   currentGameHistory.clear();
 
@@ -341,51 +429,22 @@ inline GameOutcome play_single_game(const Player& player1,
   history.reserve(static_cast<std::size_t>(maxTurns));
 
   while (turnCount < maxTurns) {
-    int repetitions = count_repetitions(state.hash);
-    if (is_repetition_limit_reached(repetitions)) {
-      if (!allowRepetition) {
-        return GameOutcome{.result = GameResult::DRAW, .reason = WinReason::REPETITION};
-      }
-    }
-
-    if (repetitions >= 2 && allowRepetition) {
-      // Scale consecutive random moves with repetition depth (e.g. 2 for first rep, 4 for second, etc.)
-      forcedRandomTurnsLeft = std::max(forcedRandomTurnsLeft, calculate_forced_random_turns(repetitions));
-    }
-    record_history_hash(state.hash);
-
-    GameStatus status = get_game_status(state);
-    if (status != GameStatus::ONGOING) {
-      GameOutcome outcome = handle_game_over(status, isP1Turn);
-      set_win_margin(outcome, state, isP1Turn);
+    GameOutcome outcome;
+    if (handle_repetition(state, forcedRandomTurnsLeft, outcome)) {
+      outcome.forcedRandomTurns = forcedRandomTurnsCount;
       return outcome;
     }
 
-    TurnRecord record{.state = state,
-                      .isP1Turn = isP1Turn,
-                      .chosenMove = -1,
-                      .possibleMoves = all_possible_moves(state),
-                      .playerPlayed = ""};
-
-    bool forceRandom = (forcedRandomTurnsLeft > 0);
-    if (forcedRandomTurnsLeft > 0) {
-      forcedRandomTurnsLeft--;
-    }
-
-    int moveId = execute_move(state, isP1Turn, player1, player2, perf, forceRandom);
-    if (moveId == -1) {
-      GameOutcome outcome = handle_invalid_move(isP1Turn);
-      set_win_margin(outcome, state, isP1Turn);
+    if (play_single_turn(
+            state, isP1Turn, player1, player2, perf, forcedRandomTurnsLeft, forcedRandomTurnsCount, history, outcome)) {
+      outcome.forcedRandomTurns = forcedRandomTurnsCount;
       return outcome;
     }
-
-    record.chosenMove = moveId;
-    record.playerPlayed = forceRandom ? "ForcedRandom" : (isP1Turn ? player1.name : player2.name);
-    history.push_back(record);
     turnCount++;
   }
 
-  return GameOutcome{.result = GameResult::DRAW, .reason = WinReason::DRAW_MAX_TURNS};
+  return GameOutcome{
+      .result = GameResult::DRAW, .reason = WinReason::DRAW_MAX_TURNS, .forcedRandomTurns = forcedRandomTurnsCount};
 }
 
 /**
@@ -414,13 +473,14 @@ inline MatchStats run_matchup_multithreaded(const Player& player1,
         break;
       }
 
+      int globalId = config.globalGameId ? config.globalGameId->fetch_add(1, std::memory_order_relaxed) : gameIdx;
       bool p1Starts = (gameIdx % 2 == 0);
       GamePerf perf;
       std::vector<TurnRecord> gameHistory;
 
       GameOutcome outcome = play_single_game(player1, player2, p1Starts, perf, config.maxTurns, gameHistory);
 
-      save_game_parquet(player1.name, player2.name, gameIdx, outcome, gameHistory);
+      save_game_parquet(player1.name, player2.name, globalId, outcome, gameHistory);
 
       if (outcome.result == GameResult::P1_WINS) {
         record_outcome(outcome, localP1);

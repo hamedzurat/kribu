@@ -31,59 +31,125 @@ inline constexpr std::array BENCHMARK_PLAYERS = {
             return select_random(state, nodes); 
         }
     },
+    // Greedy
     Player{
-        .name = "GreedyPlayer",
-        .select = [](const boardState& state, u64& nodes) { 
+        .name = "GreedyPieceCount",
+        .select = [](const boardState& state, u64& nodes) {
+            return greedy_player_maker<evaluate_piece_count>(state, nodes);
+        }
+    },
+    Player{
+        .name = "GreedyPosition",
+        .select = [](const boardState& state, u64& nodes) {
             return greedy_player_maker<evaluate_by_node_values<HEURISTIC_NODE_WEIGHTS>>(state, nodes);
         }
     },
     Player{
-        .name = "MinimaxPieceCountDepth4",
-        .select = [](const boardState& state, u64& nodes) { 
-            return minimax_player_maker<evaluate_piece_count, 4>(state, nodes); 
-        }
-    },
-    Player{
-        .name = "MinimaxPositionDepth4",
-        .select = [](const boardState& state, u64& nodes) { 
-            return minimax_player_maker<evaluate_by_node_values<HEURISTIC_NODE_WEIGHTS>, 4>(state, nodes);
-        }
-    },
-    Player{
-        .name = "MinimaxMixedDepth4",
-        .select = [](const boardState& state, u64& nodes) { 
-            return minimax_player_maker<evaluate_mixed, 4>(state, nodes);
-        }
-    },
-    Player{
-        .name = "MinimaxMobilityDepth4",
-        .select = [](const boardState& state, u64& nodes) { 
-            return minimax_player_maker<evaluate_mobility, 4>(state, nodes);
-        }
-    },
-    Player{
-        .name = "MCTSPlayerRandomIter1000",
-        .select = [](const boardState& state, u64& nodes) { 
-            return mcts_player_maker<RandomRollout, 1000>(state, nodes); 
-        }
-    },
-    Player{
-        .name = "MCTSPlayerHeuristicIter1000",
+        .name = "GreedyMobility",
         .select = [](const boardState& state, u64& nodes) {
-            return mcts_player_maker<HeuristicRollout<evaluate_by_node_values<HEURISTIC_NODE_WEIGHTS>>, 1000>(state, nodes);
+            return greedy_player_maker<evaluate_mobility>(state, nodes);
         }
     },
     Player{
-        .name = "MinimaxPositionDepth4Mad20",
+        .name = "GreedyMixed",
         .select = [](const boardState& state, u64& nodes) {
-            return minimax_player_maker<evaluate_by_node_values<HEURISTIC_NODE_WEIGHTS>, 4>(state, nodes, 20);
+            return greedy_player_maker<evaluate_mixed>(state, nodes);
         }
     },
+    // Minimax PieceCount
     Player{
-        .name = "MinimaxPositionDepth4Mad50",
-        .select = [](const boardState& state, u64& nodes) {
-            return minimax_player_maker<evaluate_by_node_values<HEURISTIC_NODE_WEIGHTS>, 4>(state, nodes, 50);
-        }
+        .name = "MinimaxPieceCountD4",
+        .select = [](const boardState& state, u64& nodes) { return minimax_player_maker<evaluate_piece_count, 4, 8>(state, nodes); }
+    },
+    Player{
+        .name = "MinimaxPieceCountD4M20",
+        .select = [](const boardState& state, u64& nodes) { return minimax_player_maker<evaluate_piece_count, 4, 8>(state, nodes, 20); }
+    },
+    Player{
+        .name = "MinimaxPieceCountD8",
+        .select = [](const boardState& state, u64& nodes) { return minimax_player_maker<evaluate_piece_count, 8, 8>(state, nodes); }
+    },
+    Player{
+        .name = "MinimaxPieceCountD8M20",
+        .select = [](const boardState& state, u64& nodes) { return minimax_player_maker<evaluate_piece_count, 8, 8>(state, nodes, 20); }
+    },
+    // Minimax Position
+    Player{
+        .name = "MinimaxPositionD4",
+        .select = [](const boardState& state, u64& nodes) { return minimax_player_maker<evaluate_by_node_values<HEURISTIC_NODE_WEIGHTS>, 4, 8>(state, nodes); }
+    },
+    Player{
+        .name = "MinimaxPositionD4M20",
+        .select = [](const boardState& state, u64& nodes) { return minimax_player_maker<evaluate_by_node_values<HEURISTIC_NODE_WEIGHTS>, 4, 8>(state, nodes, 20); }
+    },
+    Player{
+        .name = "MinimaxPositionD8",
+        .select = [](const boardState& state, u64& nodes) { return minimax_player_maker<evaluate_by_node_values<HEURISTIC_NODE_WEIGHTS>, 8, 8>(state, nodes); }
+    },
+    Player{
+        .name = "MinimaxPositionD8M20",
+        .select = [](const boardState& state, u64& nodes) { return minimax_player_maker<evaluate_by_node_values<HEURISTIC_NODE_WEIGHTS>, 8, 8>(state, nodes, 20); }
+    },
+    // Minimax Mixed
+    Player{
+        .name = "MinimaxMixedD4",
+        .select = [](const boardState& state, u64& nodes) { return minimax_player_maker<evaluate_mixed, 4, 8>(state, nodes); }
+    },
+    Player{
+        .name = "MinimaxMixedD4M20",
+        .select = [](const boardState& state, u64& nodes) { return minimax_player_maker<evaluate_mixed, 4, 8>(state, nodes, 20); }
+    },
+    Player{
+        .name = "MinimaxMixedD8",
+        .select = [](const boardState& state, u64& nodes) { return minimax_player_maker<evaluate_mixed, 8, 8>(state, nodes); }
+    },
+    Player{
+        .name = "MinimaxMixedD8M20",
+        .select = [](const boardState& state, u64& nodes) { return minimax_player_maker<evaluate_mixed, 8, 8>(state, nodes, 20); }
+    },
+    // Minimax Mobility
+    Player{
+        .name = "MinimaxMobilityD4",
+        .select = [](const boardState& state, u64& nodes) { return minimax_player_maker<evaluate_mobility, 4, 8>(state, nodes); }
+    },
+    Player{
+        .name = "MinimaxMobilityD4M20",
+        .select = [](const boardState& state, u64& nodes) { return minimax_player_maker<evaluate_mobility, 4, 8>(state, nodes, 20); }
+    },
+    Player{
+        .name = "MinimaxMobilityD8",
+        .select = [](const boardState& state, u64& nodes) { return minimax_player_maker<evaluate_mobility, 8, 8>(state, nodes); }
+    },
+    Player{
+        .name = "MinimaxMobilityD8M20",
+        .select = [](const boardState& state, u64& nodes) { return minimax_player_maker<evaluate_mobility, 8, 8>(state, nodes, 20); }
+    },
+    // MCTS Random
+    Player{
+        .name = "MctsRandom500",
+        .select = [](const boardState& state, u64& nodes) { return mcts_player_maker<RandomRollout, 500, 8>(state, nodes); }
+    },
+    Player{
+        .name = "MctsRandom1000",
+        .select = [](const boardState& state, u64& nodes) { return mcts_player_maker<RandomRollout, 1000, 8>(state, nodes); }
+    },
+    // MCTS Heuristic
+    Player{
+        .name = "MctsHeuristic500",
+        .select = [](const boardState& state, u64& nodes) { return mcts_player_maker<HeuristicRollout<evaluate_by_node_values<HEURISTIC_NODE_WEIGHTS>>, 500, 8>(state, nodes); }
+    },
+    Player{
+        .name = "MctsHeuristic1000",
+        .select = [](const boardState& state, u64& nodes) { return mcts_player_maker<HeuristicRollout<evaluate_by_node_values<HEURISTIC_NODE_WEIGHTS>>, 1000, 8>(state, nodes); }
+    },
+    // MCTS EpsilonGreedy
+    Player{
+        .name = "MctsEpsilonGreedy500",
+        .select = [](const boardState& state, u64& nodes) { return mcts_player_maker<EpsilonGreedyRollout<evaluate_by_node_values<HEURISTIC_NODE_WEIGHTS>>, 500, 8>(state, nodes); }
+    },
+    Player{
+        .name = "MctsEpsilonGreedy1000",
+        .select = [](const boardState& state, u64& nodes) { return mcts_player_maker<EpsilonGreedyRollout<evaluate_by_node_values<HEURISTIC_NODE_WEIGHTS>>, 1000, 8>(state, nodes); }
     }
     // clang-format on
 };

@@ -10,6 +10,7 @@
 #include <parquet/exception.h>
 #include <parquet/properties.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -17,6 +18,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -33,6 +35,7 @@
 #include "config.hpp"
 #include "kribu/benchmark.hpp"
 #include "kribu/player/_.hpp"
+#include "kribu/rules.hpp"
 
 using namespace kribu::board;
 using namespace kribu::sholoGuti;
@@ -42,23 +45,37 @@ namespace kribu::benchmark {
 
 namespace {
 
-/**
- * @struct GameMetadata
- * @brief Represents metadata of a single simulated game for the JSON manifest.
- */
-struct GameMetadata {
-  int gameIdx;
-  std::string p1Name;
-  std::string p2Name;
-  std::string outcome;
-  std::string reason;
-  int totalTurns;
-  int winMargin;
-  std::string filePath;
-};
+std::mutex metadataMutex;
+std::atomic<int> globalGameId{1};
 
-std::vector<GameMetadata> allGamesMetadata;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
-std::mutex metadataMutex;                    // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+/**
+ * @brief Reads the highest game ID from the CSV manifest, if it exists.
+ */
+int find_max_id_from_csv(const std::string& filepath) {
+  std::ifstream infile(filepath);
+  if (!infile.is_open()) {
+    return 0;
+  }
+  std::string line;
+  int maxId = 0;
+  // skip header
+  std::getline(infile, line);
+  while (std::getline(infile, line)) {
+    if (line.empty()) {
+      continue;
+    }
+    auto pos = line.find(',');
+    if (pos != std::string::npos) {
+      try {
+        int parsedId = std::stoi(line.substr(0, pos));
+        maxId = std::max(parsedId, maxId);
+      } catch (const std::exception& e) {
+        std::cerr << "Warning: failed to parse manifest CSV id: " << e.what() << "\n";
+      }
+    }
+  }
+  return maxId;
+}
 
 /**
  * @brief Holds fully-finished Arrow arrays for a single game.
@@ -119,11 +136,14 @@ GameArrays build_turn_arrays(  // NOLINT(readability-function-cognitive-complexi
 struct GameTableParams {
   std::string_view player1Name;  ///< Name of Player 1.
   std::string_view player2Name;  ///< Name of Player 2.
-  int gameIdx = 0;               ///< Game index.
+  int gameId = 0;                ///< Global game ID.
+  std::string winner;            ///< Name of the winner.
+  std::string loser;             ///< Name of the loser.
   std::string outcomeStr;        ///< Outcome string (P1_WINS / P2_WINS / DRAW).
   std::string reasonStr;         ///< Reason string (ELIMINATION / STALEMATE / etc.).
   int totalTurns = 0;            ///< Total number of turns in the game.
   int winMargin = 0;             ///< Victory margin (pieces remaining difference).
+  int forcedRandomTurns = 0;     ///< Number of forced random turns.
 };
 
 /**
@@ -134,13 +154,16 @@ struct GameTableParams {
  */
 std::shared_ptr<arrow::Table> build_game_table(const GameArrays& arrays, const GameTableParams& params) {
   auto metadata = std::make_shared<arrow::KeyValueMetadata>();
+  metadata->Append("id", std::to_string(params.gameId));
   metadata->Append("p1Name", std::string(params.player1Name));
   metadata->Append("p2Name", std::string(params.player2Name));
-  metadata->Append("gameIdx", std::to_string(params.gameIdx));
+  metadata->Append("winner", params.winner);
+  metadata->Append("loser", params.loser);
   metadata->Append("outcome", params.outcomeStr);
   metadata->Append("reason", params.reasonStr);
   metadata->Append("totalTurns", std::to_string(params.totalTurns));
   metadata->Append("winMargin", std::to_string(params.winMargin));
+  metadata->Append("forcedRandomTurns", std::to_string(params.forcedRandomTurns));
 
   auto schema = arrow::schema({arrow::field("me", arrow::int64()),
                                arrow::field("opp", arrow::int64()),
@@ -217,10 +240,21 @@ std::string reason_to_string(WinReason reason) {
  * @param p1Name Name of Player 1.
  * @param p2Name Name of Player 2.
  */
-void print_progress(int completed, int total, std::string_view p1Name, std::string_view p2Name) noexcept {
+void print_progress(int completed,
+                    int total,
+                    std::string_view p1Name,
+                    std::string_view p2Name,
+                    std::chrono::time_point<std::chrono::high_resolution_clock> start) noexcept {
   constexpr int BAR_WIDTH = 20;
   float progress = static_cast<float>(completed) / static_cast<float>(total);
   int pos = static_cast<int>(BAR_WIDTH * progress);
+
+  auto now = std::chrono::high_resolution_clock::now();
+  auto elapsedSecs = std::chrono::duration<double>(now - start).count();
+  double etaSecs = 0.0;
+  if (completed > 0 && completed < total) {
+    etaSecs = (elapsedSecs / completed) * (total - completed);
+  }
 
   std::cout << "\rMatchup: " << p1Name << " vs " << p2Name << " | [";
   for (int i = 0; i < BAR_WIDTH; ++i) {
@@ -232,34 +266,15 @@ void print_progress(int completed, int total, std::string_view p1Name, std::stri
       std::cout << " ";
     }
   }
-  std::cout << "] " << static_cast<int>(progress * 100.0) << "% (" << completed << "/" << total << ")" << std::flush;
-}
+  std::cout << "] " << static_cast<int>(progress * 100.0) << "% (" << completed << "/" << total << ")";
 
-/**
- * @brief Saves the tournament metadata manifest to a JSON file.
- * @param games The collection of metadata for all simulated games.
- */
-void save_manifest_json(const std::vector<GameMetadata>& games) {
-  std::ofstream outfile("benchmark/manifest.json");
-  if (!outfile.is_open()) {
-    std::cerr << "Failed to open benchmark/manifest.json for writing.\n";
-    return;
+  if (completed > 0 && completed < total) {
+    std::cout << " ETA: " << std::fixed << std::setprecision(1) << etaSecs << "s";
+  } else if (completed == total) {
+    std::cout << " Time: " << std::fixed << std::setprecision(1) << elapsedSecs << "s";
   }
-  outfile << "[\n";
-  for (std::size_t i = 0; i < games.size(); ++i) {
-    const auto& game = games[i];
-    outfile << "  {\n"
-            << "    \"gameIdx\": " << game.gameIdx << ",\n"
-            << R"(    "p1Name": ")" << game.p1Name << R"(",)" << "\n"
-            << R"(    "p2Name": ")" << game.p2Name << R"(",)" << "\n"
-            << R"(    "outcome": ")" << game.outcome << R"(",)" << "\n"
-            << R"(    "reason": ")" << game.reason << R"(",)" << "\n"
-            << "    \"totalTurns\": " << game.totalTurns << ",\n"
-            << "    \"winMargin\": " << game.winMargin << ",\n"
-            << R"(    "filePath": ")" << game.filePath << R"(")" << "\n"
-            << "  }" << (i + 1 < games.size() ? "," : "") << "\n";
-  }
-  outfile << "]\n";
+
+  std::cout << "       " << std::flush;
 }
 
 /**
@@ -281,15 +296,16 @@ void run_matchup(const MatchConfig& match,
   const auto& playerSecond = players.at(std::string(match.player2Name));
 
   std::atomic<int> completedGames{0};
+  auto startTime = std::chrono::high_resolution_clock::now();
 
-  std::thread progressThread([&completedGames, &match, &playerFirst, &playerSecond]() {
+  std::thread progressThread([&completedGames, &match, &playerFirst, &playerSecond, startTime]() {
     while (true) {
       int completed = completedGames.load(std::memory_order_relaxed);
-      print_progress(completed, match.games, playerFirst.name, playerSecond.name);
+      print_progress(completed, match.games, playerFirst.name, playerSecond.name, startTime);
       if (completed >= match.games) {
         break;
       }
-      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
   });
 
@@ -298,7 +314,8 @@ void run_matchup(const MatchConfig& match,
                                                TournamentConfig{.totalGames = match.games,
                                                                 .maxTurns = match.maxTurns,
                                                                 .threadCount = THREAD_COUNT,
-                                                                .completedGames = &completedGames});
+                                                                .completedGames = &completedGames,
+                                                                .globalGameId = &globalGameId});
 
   if (progressThread.joinable()) {
     progressThread.join();
@@ -339,37 +356,50 @@ void run_matchup(const MatchConfig& match,
  */
 void save_game_parquet(std::string_view player1Name,
                        std::string_view player2Name,
-                       int gameIdx,
+                       int gameId,
                        const GameOutcome& outcome,
                        const std::vector<TurnRecord>& history) {
+  std::string winner = "DRAW";
+  std::string loser = "DRAW";
+  std::string outcomeStr = outcome_to_string(outcome.result);
+
+  if (outcomeStr == "P1_WINS") {
+    winner = player1Name;
+    loser = player2Name;
+  } else if (outcomeStr == "P2_WINS") {
+    winner = player2Name;
+    loser = player1Name;
+  }
+
   GameTableParams params{.player1Name = player1Name,
                          .player2Name = player2Name,
-                         .gameIdx = gameIdx,
-                         .outcomeStr = outcome_to_string(outcome.result),
+                         .gameId = gameId,
+                         .winner = winner,
+                         .loser = loser,
+                         .outcomeStr = outcomeStr,
                          .reasonStr = reason_to_string(outcome.reason),
                          .totalTurns = static_cast<int>(history.size()),
-                         .winMargin = outcome.winMargin};
+                         .winMargin = outcome.winMargin,
+                         .forcedRandomTurns = outcome.forcedRandomTurns};
 
   const GameArrays arrays = build_turn_arrays(history);
   const auto table = build_game_table(arrays, params);
 
-  const bool p1Starts = (gameIdx % 2 == 0);
-  const std::string startPlayer = p1Starts ? std::string(player1Name) : std::string(player2Name);
-  const std::string nextPlayer = p1Starts ? std::string(player2Name) : std::string(player1Name);
-  const std::string filename =
-      "benchmark/game_" + startPlayer + "_vs_" + nextPlayer + "_" + std::to_string(gameIdx) + ".parquet";
+  const std::string filename = "benchmark/" + std::to_string(gameId) + ".parquet";
   write_parquet_file(*table, filename);
 
   {
     std::scoped_lock lock(metadataMutex);
-    allGamesMetadata.push_back(GameMetadata{.gameIdx = gameIdx,
-                                            .p1Name = std::string(player1Name),
-                                            .p2Name = std::string(player2Name),
-                                            .outcome = params.outcomeStr,
-                                            .reason = params.reasonStr,
-                                            .totalTurns = params.totalTurns,
-                                            .winMargin = params.winMargin,
-                                            .filePath = filename});
+    std::string csvPath = "benchmark/manifest.csv";
+    bool fileExists = std::filesystem::exists(csvPath);
+    std::ofstream outfile(csvPath, std::ios::app);
+    if (outfile.is_open()) {
+      if (!fileExists) {
+        outfile << "id,winner,loser,outcome,reason,totalTurns,winMargin,forcedRandomTurns\n";
+      }
+      outfile << gameId << "," << winner << "," << loser << "," << params.outcomeStr << "," << params.reasonStr << ","
+              << params.totalTurns << "," << params.winMargin << "," << params.forcedRandomTurns << "\n";
+    }
   }
 }
 
@@ -385,6 +415,9 @@ int main() {
   try {
     std::filesystem::create_directories("benchmark");
 
+    int lastId = find_max_id_from_csv("benchmark/manifest.csv");
+    globalGameId.store(lastId + 1, std::memory_order_relaxed);
+
     const auto playerList = kribu::player::BENCHMARK_PLAYERS;
     std::map<std::string, Player> players;
     for (const auto& playerEntry : playerList) {
@@ -394,7 +427,8 @@ int main() {
 
     const auto matchups = BENCHMARK_MATCHUPS;
 
-    std::cout << "\nStarting " << matchups.size() << " matchups with " << THREAD_COUNT << " threads...\n\n";
+    std::cout << "\nStarting " << matchups.size() << " matchups with " << THREAD_COUNT << " threads (starting from ID "
+              << (lastId + 1) << ")...\n\n";
 
     tabulate::Table summaryTable;
     summaryTable.add_row({"Player 1",
@@ -411,8 +445,6 @@ int main() {
     for (const auto& match : matchups) {
       kribu::benchmark::run_matchup(match, players, summaryTable);
     }
-
-    save_manifest_json(allGamesMetadata);
 
     // Format summaryTable for premium terminal DX
     summaryTable[0]

@@ -57,12 +57,7 @@ class TranspositionTable {
    * @brief Probes the table for a cached match.
    * @return True if a valid cutoff or exact score is found, false otherwise.
    */
-  [[nodiscard]] bool probe(u64 hash,
-                           int depth,  // NOLINT(bugprone-easily-swappable-parameters)
-                           i32 alpha,
-                           i32 beta,
-                           i32& score,  // NOLINT(bugprone-easily-swappable-parameters)
-                           int& moveId) const noexcept {
+  [[nodiscard]] bool probe(u64 hash, int depth, i32 alpha, i32 beta, i32& score, int& moveId) const noexcept {
     std::size_t idx = hash % table.size();
     const auto& entry = table[idx];
     if (entry.hash == hash && std::cmp_greater_equal(entry.depth, depth)) {
@@ -88,11 +83,7 @@ class TranspositionTable {
   /**
    * @brief Stores a search result in the transposition table.
    */
-  void store(u64 hash,
-             int depth,  // NOLINT(bugprone-easily-swappable-parameters)
-             i32 score,
-             int moveId,
-             TTFlag flag) noexcept {
+  void store(u64 hash, int depth, i32 score, int moveId, TTFlag flag) noexcept {
     std::size_t idx = hash % table.size();
     auto& entry = table[idx];
     // Depth-preferred replacement scheme

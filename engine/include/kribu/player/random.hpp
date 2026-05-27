@@ -8,6 +8,7 @@
 #include <random>
 
 #include "kribu/board.hpp"
+#include "kribu/fast_rng.hpp"
 #include "kribu/rules.hpp"
 #include "kribu/types.hpp"
 

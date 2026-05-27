@@ -141,25 +141,39 @@ def render_board(green_mask: int, red_mask: int, active_capture_idx: int) -> str
 
 
 def select_game_from_manifest(console: Console) -> str:
-    """Lists simulated games from manifest.json and prompts user to pick one."""
-    manifest_path = "benchmark/manifest.json"
+    """Lists simulated games from manifest.csv and prompts user to pick one."""
+    manifest_path = "benchmark/manifest.csv"
     if not os.path.exists(manifest_path):
-        console.print("[bold red]Error: No manifest.json found, and no parquet file path was provided.[/bold red]")
+        console.print("[bold red]Error: No manifest.csv found, and no parquet file path was provided.[/bold red]")
         sys.exit(1)
 
-    import json
+    import csv
 
-    with open(manifest_path, "r") as f:
-        games = json.load(f)
+    games = []
+    with open(manifest_path, "r", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            games.append(row)
 
     if not games:
         console.print("[bold yellow]Manifest is empty. No games simulated yet.[/bold yellow]")
         sys.exit(0)
 
+    # Sort games by Winner primarily, then by ID
+    games.sort(key=lambda g: (g["winner"], int(g["id"])))
+
     # Split the games list to render two tables side-by-side
     num_cols = 3
     chunk_size = (len(games) + num_cols - 1) // num_cols
     tables = []
+    
+    reason_map = {
+        "ELIMINATION": "ELIM",
+        "STALEMATE": "STAL",
+        "INVALID_MOVE": "INVL",
+        "DRAW_MAX_TURNS": "DRAW",
+        "REPETITION": "REPT",
+    }
 
     for col_idx in range(num_cols):
         start_idx = col_idx * chunk_size
@@ -169,40 +183,40 @@ def select_game_from_manifest(console: Console) -> str:
 
         table = Table(title=f"Games {start_idx + 1} - {end_idx}", header_style="bold yellow", expand=True)
         table.add_column("No.", justify="right", style="cyan")
-        table.add_column("Player 1 (Green)", style="green")
-        table.add_column("Player 2 (Red)", style="red")
+        table.add_column("Winner", style="green")
+        table.add_column("Loser", style="red")
         table.add_column("Reason", style="blue")
         table.add_column("Turns", justify="right", style="white")
-        table.add_column("Win By", justify="right", style="yellow")
+        table.add_column("Win", justify="right", style="yellow")
+        table.add_column("Rnd", justify="right", style="magenta")
 
         for idx in range(start_idx, end_idx):
             g = games[idx]
-            p1_suffix = " *" if g.get("outcome") == "P1_WINS" else ""
-            p2_suffix = " *" if g.get("outcome") == "P2_WINS" else ""
-            win_by = str(g.get("winMargin", 0)) if g.get("outcome") != "DRAW" else "-"
+            win_by = g.get("winMargin", "0") if g.get("outcome") != "DRAW" else "-"
+            forced_rnd = g.get("forcedRandomTurns", "0")
+            short_reason = reason_map.get(g["reason"], g["reason"])
             table.add_row(
-                str(idx + 1),
-                g["p1Name"] + p1_suffix,
-                g["p2Name"] + p2_suffix,
-                g["reason"],
-                str(g["totalTurns"]),
+                g["id"],
+                g["winner"],
+                g["loser"],
+                short_reason,
+                g["totalTurns"],
                 win_by,
+                forced_rnd,
             )
         tables.append(table)
 
     console.print(Columns(tables, equal=True, expand=True))
 
+    valid_ids = {g["id"] for g in games}
+
     while True:
-        try:
-            choice = input(f"\nSelect a game index to view (1-{len(games)}) or [q] to quit: ").strip()
-            if choice.lower() == "q":
-                sys.exit(0)
-            choice_idx = int(choice) - 1
-            if 0 <= choice_idx < len(games):
-                return games[choice_idx]["filePath"]
-            console.print(f"[red]Invalid selection. Please enter 1 to {len(games)}.[/red]")
-        except ValueError:
-            console.print("[red]Please enter a valid number.[/red]")
+        choice = input(f"\nSelect a game ID to view or [q] to quit: ").strip()
+        if choice.lower() == "q":
+            sys.exit(0)
+        if choice in valid_ids:
+            return f"benchmark/{choice}.parquet"
+        console.print(f"[red]Invalid selection. Game ID {choice} not found.[/red]")
 
 
 def main():
@@ -234,6 +248,7 @@ def main():
     reason = meta.get("reason", "N/A")
     total_turns = int(meta.get("totalTurns", 0))
     win_margin = meta.get("winMargin", "0")
+    forced_random_turns = int(meta.get("forcedRandomTurns", 0))
 
     # Read column vectors
     me_col = table.column("me").to_pylist()
@@ -292,6 +307,7 @@ def main():
 
         info_table.add_row("Turn/Ply Index:", f"{turn_idx + 1} / {actual_length}")
         info_table.add_row("Total Turns (Game):", f"[bold white]{total_turns}[/bold white]")
+        info_table.add_row("Forced Random Plays:", f"[bold magenta]{forced_random_turns}[/bold magenta]")
 
         info_table.add_row(
             "Active Turn:", f"[bold {active_player_color}]{active_player_name}[/bold {active_player_color}]"

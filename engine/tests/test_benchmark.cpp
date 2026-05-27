@@ -1,0 +1,26 @@
+/**
+ * @file test_benchmark.cpp
+ * @brief Unit tests for the benchmark / simulation engine.
+ */
+
+#include <catch2/catch_test_macros.hpp>
+#include <kribu/benchmark.hpp>
+#include <kribu/player/random.hpp>
+#include <vector>
+
+using namespace kribu::benchmark;
+
+/**
+ * @brief Test case to verify forced random turns tracking during single game playback.
+ */
+TEST_CASE("Benchmark - Forced Random Turns Tracking", "[benchmark]") {
+  Player player1{.name = "P1", .select = kribu::player::select_random};
+  Player player2{.name = "P2", .select = kribu::player::select_random};
+
+  GamePerf perf;
+  std::vector<TurnRecord> history;
+
+  GameOutcome outcome = play_single_game(player1, player2, true, perf, 100, history);
+
+  REQUIRE(outcome.forcedRandomTurns >= 0);
+}

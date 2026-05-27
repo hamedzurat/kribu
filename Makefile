@@ -39,7 +39,7 @@ test-python:
 run:
 	PYTHONPATH=python/src uv run python python/src/kribu/main.py
 
-benchmark: release
+benchmark:
 	./build_release/engine/benchmark/kribu_benchmark_main
 
 view-benchmark:
