@@ -7,8 +7,9 @@
 
 #pragma once
 
-#include <cstdint>
 #include <random>
+
+#include "types.hpp"
 
 /**
  * @class FastRng
@@ -21,19 +22,19 @@ class FastRng {
   /**
    * @brief The type of the generated unsigned integers.
    */
-  using result_type = std::uint64_t;
+  using result_type = u64;
 
   /**
    * @brief Returns the minimum possible value generated.
    * @return 0.
    */
-  static constexpr result_type min() noexcept { return 0; }
+  static constexpr u64 min() noexcept { return 0; }
 
   /**
    * @brief Returns the maximum possible value generated.
    * @return UINT64_MAX.
    */
-  static constexpr result_type max() noexcept { return ~static_cast<result_type>(0); }
+  static constexpr u64 max() noexcept { return ~static_cast<u64>(0); }
 
   /**
    * @brief Default constructor initializing the generator with a default seed.
@@ -44,14 +45,14 @@ class FastRng {
    * @brief Constructor initializing the generator with a custom seed.
    * @param seed The initialization seed (if 0, a default seed is used).
    */
-  explicit constexpr FastRng(std::uint64_t seed) noexcept : state_(seed == 0 ? 88172645463325252ULL : seed) {}
+  explicit constexpr FastRng(u64 seed) noexcept : state_(seed == 0 ? 88172645463325252ULL : seed) {}
 
   /**
    * @brief Generates the next pseudo-random number.
    * @return The generated 64-bit unsigned integer.
    */
-  result_type operator()() noexcept {
-    std::uint64_t nextState = state_;
+  u64 operator()() noexcept {
+    u64 nextState = state_;
     nextState ^= nextState << 13;
     nextState ^= nextState >> 7;
     nextState ^= nextState << 17;
@@ -63,7 +64,7 @@ class FastRng {
   /**
    * @brief The internal 64-bit state of the generator.
    */
-  std::uint64_t state_;
+  u64 state_;
 };
 
 /**

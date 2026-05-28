@@ -62,24 +62,20 @@ TEST_CASE("Iterative Deepening Finds Winning Move", "[minimax]") {
   REQUIRE(winMoveId != -1);
 
   // Iterative deepening at depth 3 should still find the winning capture
-  u64 nodes = 0;
   kribu::TranspositionTable transpositionTable(1048576);
   MinimaxResult res = minimax<kribu::heuristics::evaluate_by_node_values<kribu::heuristics::HEURISTIC_NODE_WEIGHTS>>(
-      state, 3, -INFINITY_VAL, INFINITY_VAL, nodes, &transpositionTable);
+      state, 3, -INFINITY_VAL, INFINITY_VAL, &transpositionTable);
   REQUIRE(res.moveId == winMoveId);
   REQUIRE(res.score >= INFINITY_VAL);
-  REQUIRE(nodes > 0);
 }
 
 TEST_CASE("Player Maker Interface", "[minimax]") {
   boardState state = INITIAL_STATE;
-  u64 nodes = 0;
   int moveId =
       minimax_player_maker<kribu::heuristics::evaluate_by_node_values<kribu::heuristics::HEURISTIC_NODE_WEIGHTS>, 2>(
-          state, nodes);
+          state);
   REQUIRE(moveId != -1);
   REQUIRE(kribu::sholoGuti::is_valid(state, moveId));
-  REQUIRE(nodes > 0);
 }
 
 TEST_CASE("Killer Table Store And Query", "[minimax]") {  // NOLINT(readability-function-cognitive-complexity)

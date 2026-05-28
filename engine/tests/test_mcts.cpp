@@ -15,24 +15,20 @@ using namespace kribu::player;
 
 TEST_CASE("MCTS Initial State Move", "[mcts]") {
   boardState state = INITIAL_STATE;
-  u64 nodes = 0;
   // Test sequential MCTS with HeuristicRollout
   int moveId = mcts_player_maker<
       HeuristicRollout<kribu::heuristics::evaluate_by_node_values<kribu::heuristics::HEURISTIC_NODE_WEIGHTS>>,
-      100>(state, nodes);
+      100>(state);
   REQUIRE(moveId != -1);
   REQUIRE(kribu::sholoGuti::is_valid(state, moveId));
-  REQUIRE(nodes > 0);
 }
 
 TEST_CASE("MCTS Parallel Initial State Move", "[mcts]") {
   boardState state = INITIAL_STATE;
-  u64 nodes = 0;
   // Test parallel MCTS (2 threads)
-  int moveId = mcts_player_maker<RandomRollout, 100, 2>(state, nodes);
+  int moveId = mcts_player_maker<RandomRollout, 100, 2>(state);
   REQUIRE(moveId != -1);
   REQUIRE(kribu::sholoGuti::is_valid(state, moveId));
-  REQUIRE(nodes > 0);
 }
 
 TEST_CASE("MCTS Find Winning Capture", "[mcts]") {
@@ -47,8 +43,7 @@ TEST_CASE("MCTS Find Winning Capture", "[mcts]") {
   REQUIRE(winMoveId != -1);
   REQUIRE(kribu::sholoGuti::is_capture_move(winMoveId));
 
-  u64 nodes = 0;
-  int moveId = mcts_player_maker<RandomRollout, 500>(state, nodes);
+  int moveId = mcts_player_maker<RandomRollout, 500>(state);
   REQUIRE(moveId == winMoveId);
 }
 
@@ -62,10 +57,7 @@ TEST_CASE("MCTS Early Termination", "[mcts]") {
   int winMoveId = kribu::sholoGuti::find_move(16, 18);
   REQUIRE(winMoveId != -1);
 
-  u64 nodes = 0;
   // 1000 iterations is enough that early term will trigger if implemented
-  int moveId = mcts_player_maker<RandomRollout, 1000>(state, nodes);
+  int moveId = mcts_player_maker<RandomRollout, 1000>(state);
   REQUIRE(moveId == winMoveId);
-  // Ideally we would assert nodes < 1000, but nodes equals total rollouts.
-  // In our parallel implementation, we check iter.
 }

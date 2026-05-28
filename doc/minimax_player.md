@@ -4,7 +4,7 @@ The **Minimax Player** is a highly optimized search-based agent that uses the mi
 
 ## Overview
 
-The minimax player is implemented in \[minimax.hpp\](file:///home/hz/file/git/kribu/engine/include/kribu/player/minimax.hpp). It supports templates for custom evaluation functions and is configured with optimizations that match modern chess/checkers engines.
+The minimax player is implemented in [minimax.hpp](../engine/include/kribu/player/minimax.hpp). It supports templates for custom evaluation functions and is configured with optimizations that match modern chess/checkers engines.
 
 ______________________________________________________________________
 
@@ -14,7 +14,7 @@ The minimax engine implements the following search enhancements:
 
 ### 1. Lazy SMP Parallelism
 
-When configured with multiple threads (`NumThreads > 1`), the player uses **Lazy SMP (Symmetric Multi-Processing)**.
+The player is always configured with multiple threads (`NumThreads >= 2`) and uses **Lazy SMP (Symmetric Multi-Processing)**.
 
 - It spawns multiple threads, all performing independent search iterations on the same root position.
 - They share a single global **Transposition Table (TT)**.
@@ -27,7 +27,7 @@ When configured with multiple threads (`NumThreads > 1`), the player uses **Lazy
 Instead of searching directly to the target depth, the engine searches incrementally from depth $1, 2, \\dots, D$.
 
 - **Transposition Table Warmup**: Shallower searches populate the TT, ensuring that deeper searches start with highly accurate move ordering.
-- **Aspiration Windows**: For depth $d \\ge 3$, the engine restricts the alpha-beta search window to $[prevScore - 50, prevScore + 50]$ using the score from depth $d-1$. If the score fails outside this window (fails low/high), the search is repeated with a full window. This saves search time by pruning branches outside the expected score range.
+- **Aspiration Windows**: For depth $d \\ge 3$, the engine restricts the alpha-beta search window to $[prevScore - 50, prevScore + 50]$ using the score from depth $d-1$. If the score falls outside this window (fails low/high), the search is repeated with a full window. This saves search time by pruning branches outside the expected score range.
 
 ### 3. Move Ordering
 
@@ -66,6 +66,87 @@ To avoid the **horizon effect** (where a player blunders because a bad capture s
 
 - Only captures and turn-ending moves (`END_CHAIN_MOVE`) are evaluated.
 - Uses "stand-pat" evaluation (the static evaluation of the current board state) as a lower bound.
+
+______________________________________________________________________
+
+## Zobrist Hashing
+
+Zobrist hashing maps arbitrary board layouts to a 64-bit unsigned integer space. It is defined in [zobrist.hpp](../engine/include/kribu/zobrist.hpp).
+
+### 1. The Concept
+
+Two different sequences of moves can lead to the exact same board state (transposition). Recalculating identical states is redundant. Zobrist hashing provides a fast, unique 64-bit signature (hash) for each unique position.
+
+### 2. Compile-Time Key Generation
+
+The engine generates unique keys at compile-time to avoid initialization overhead:
+
+- A custom, constexpr linear congruential/Xorshift pseudo-random number generator (`next_random`) generates keys using a seed value `ZOBRIST_SEED = 0x9e3779b97f4a7c15ULL`.
+- **`ZobristKeys`**: Contains distinct key arrays mapping:
+  - Active player piece positions (`me` array, size 37).
+  - Opponent piece positions (`opp` array, size 37).
+  - Active capture index positions (`activeCapture` array, size 38; includes a sentinel slot at index 37 for `-1`).
+
+### 3. Incremental Hash Updates
+
+Hashing is extremely fast because it is updated incrementally using the bitwise **XOR (`^`)** operator during move applications inside `apply_move`:
+
+- Since $A \\oplus B \\oplus B = A$, applying or reversing a state change is a matter of XOR-ing the state keys:
+  - When a piece moves from node $A$ to node $B$, the hash is updated with:
+    `hash ^= KEYS.me[A] ^ KEYS.me[B]`
+  - If a piece is captured at node $C$, the opponent's key is XOR-ed:
+    `hash ^= KEYS.opp[C]`
+  - Capture lock indexes are updated similarly.
+- This avoids scanning all 37 board nodes on every search step. When needed (e.g. at initialization), a hash can be computed from scratch via `compute_hash`.
+
+______________________________________________________________________
+
+## Transposition Table (TT)
+
+The transposition table acts as a global cache for search results. It is defined in [transposition_table.hpp](../engine/include/kribu/transposition_table.hpp).
+
+### 1. Entry Structure (`TTEntry`)
+
+Each entry in the table stores:
+
+- `hash`: The full 64-bit Zobrist key of the board state.
+- `score`: The evaluated score of the state.
+- `moveId`: The best move identified from this state (used for move ordering).
+- `depth`: The remaining depth of the search when this state was cached.
+- `flag`: The bounding type of the score (`TTFlag`).
+
+### 2. Transposition Flags (`TTFlag`)
+
+Because alpha-beta pruning clips search trees, the exact score is not always known:
+
+| Flag            | Name        | Meaning                                                                              |
+| :-------------- | :---------- | :----------------------------------------------------------------------------------- |
+| `TTFlag::EXACT` | Exact       | The exact evaluation score was computed (between alpha and beta).                    |
+| `TTFlag::ALPHA` | Upper Bound | The search failed low (score $\\le \\alpha$). The true score is at most this value.  |
+| `TTFlag::BETA`  | Lower Bound | The search failed high (score $\\ge \\beta$). The true score is at least this value. |
+
+### 3. Probing & Bounds Verification
+
+When `probe` is called:
+
+1. Calculates the index via `hash % table.size()`.
+1. Verifies that the stored entry matches the requested `hash`.
+1. Verifies that the stored entry's depth is $\\ge$ the current search depth (ensuring the cached result is sufficiently searched).
+1. Verifies bounding rules:
+   - If `EXACT`, returns the score.
+   - If `ALPHA` and the stored score is $\\le \\alpha$, returns $\\alpha$.
+   - If `BETA` and the stored score is $\\ge \\beta$, returns $\\beta$.
+
+### 4. Replacement Scheme
+
+To maximize cache hit rates, the table uses a **depth-preferred replacement scheme**. During `store`:
+
+- An entry is overwritten if the new evaluation was performed at a greater remaining depth than the stored depth (`depth >= entry.depth`).
+- This prioritizes keeping deep search results (which are very expensive to compute) over shallow, near-leaf evaluations.
+
+### 5. Shared Parallel Search (Lazy SMP)
+
+The transposition table is shared globally among threads in Lazy SMP. It is designed to be **lock-free** to prevent synchronization bottlenecks. Data race writes to entries are harmless (causing at worst a cache miss or a corrupted entry that fails the 64-bit hash validation check on the next probe).
 
 ______________________________________________________________________
 

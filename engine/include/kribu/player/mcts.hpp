@@ -19,7 +19,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstddef>
 #include <numbers>
 #include <random>
 #include <thread>
@@ -42,18 +41,18 @@ using namespace kribu::sholoGuti;
 /**
  * @brief UCT exploration constant (√2).
  */
-constexpr float MCTS_EXPLORATION_C = static_cast<float>(std::numbers::sqrt2);
+constexpr f32 MCTS_EXPLORATION_C = static_cast<f32>(std::numbers::sqrt2);
 
 /**
  * @brief Weight of heuristic prior in progressive bias formula.
  * @details Added as prior * weight / (visits + 1), fading as visits grow.
  */
-constexpr float MCTS_BIAS_WEIGHT = 1.0F;
+constexpr f32 MCTS_BIAS_WEIGHT = 1.0F;
 
 /**
  * @brief FPU reduction: subtracted from parent win rate for unvisited children.
  */
-constexpr float MCTS_FPU_REDUCTION = 0.1F;
+constexpr f32 MCTS_FPU_REDUCTION = 0.1F;
 
 /**
  * @brief Iteration interval for checking early termination.
@@ -63,7 +62,7 @@ constexpr int MCTS_EARLY_TERM_INTERVAL = 50;
 /**
  * @brief Visit share threshold to trigger early termination (0.85 = 85%).
  */
-constexpr float MCTS_EARLY_TERM_THRESHOLD = 0.85F;
+constexpr f32 MCTS_EARLY_TERM_THRESHOLD = 0.85F;
 
 /**
  * @brief Maximum steps per rollout simulation.
@@ -73,12 +72,12 @@ constexpr int MCTS_MAX_ROLLOUT_STEPS = 60;
 /**
  * @brief Probability of random move in epsilon-greedy rollout.
  */
-constexpr float MCTS_EPSILON = 0.3F;
+constexpr f32 MCTS_EPSILON = 0.3F;
 
 /**
  * @brief Divisor for tanh-based score-to-value normalization.
  */
-constexpr float MCTS_SCORE_SCALE = 50.0F;
+constexpr f32 MCTS_SCORE_SCALE = 50.0F;
 
 // ── Utility Functions ───────────────────────────────────────────────────
 
@@ -87,7 +86,7 @@ constexpr float MCTS_SCORE_SCALE = 50.0F;
  * @param score Raw evaluation score.
  * @return Normalized value in [0, 1].
  */
-[[nodiscard]] inline float mcts_score_to_value(float score) noexcept {
+[[nodiscard]] inline f32 mcts_score_to_value(f32 score) noexcept {
   return 0.5F + (0.5F * std::tanh(score / MCTS_SCORE_SCALE));
 }
 
@@ -124,18 +123,15 @@ struct RandomRollout {
    * @param state Current board state.
    * @return Random legal move ID, or -1 if none.
    */
-  static int select_move(const boardState& state) {
-    u64 dummy = 0;
-    return select_random(state, dummy);
-  }
+  static int select_move(const boardState& state) { return select_random(state); }
 
   /**
    * @brief Simple static evaluation at the end of the playout using piece count.
    * @param state Board state to evaluate.
    * @return Piece count evaluation score.
    */
-  static double evaluate(const boardState& state) noexcept {
-    return static_cast<double>(heuristics::evaluate_piece_count(state));
+  static f64 evaluate(const boardState& state) noexcept {
+    return static_cast<f64>(heuristics::evaluate_piece_count(state));
   }
 };
 
@@ -176,7 +172,7 @@ struct HeuristicRollout {
    * @param state Board state to evaluate.
    * @return Evaluation score.
    */
-  static double evaluate(const boardState& state) noexcept { return static_cast<double>(EvalFunc(state)); }
+  static f64 evaluate(const boardState& state) noexcept { return static_cast<f64>(EvalFunc(state)); }
 };
 
 /**
@@ -199,7 +195,7 @@ struct EpsilonGreedyRollout {
     if (moves.empty()) {
       return -1;
     }
-    std::uniform_real_distribution<float> prob(0.0F, 1.0F);
+    std::uniform_real_distribution<f32> prob(0.0F, 1.0F);
     if (prob(rng) < MCTS_EPSILON) {
       std::uniform_int_distribution<int> dist(0, moves.size() - 1);
       return moves.moves[dist(rng)];
@@ -212,7 +208,7 @@ struct EpsilonGreedyRollout {
    * @param state Board state to evaluate.
    * @return Evaluation score.
    */
-  static double evaluate(const boardState& state) noexcept { return static_cast<double>(EvalFunc(state)); }
+  static f64 evaluate(const boardState& state) noexcept { return static_cast<f64>(EvalFunc(state)); }
 
  private:
   /**
@@ -290,18 +286,18 @@ struct MCTSNode {
   /**
    * @brief Total visit count.
    */
-  float visits = 0.0F;
+  f32 visits = 0.0F;
 
   /**
    * @brief Cumulative value sum from backpropagation.
    */
-  float valueSum = 0.0F;
+  f32 valueSum = 0.0F;
 
   /**
    * @brief Heuristic prior for progressive bias (normalized to [0,1]).
    * @details Computed once at node creation via RolloutPolicy::evaluate.
    */
-  float prior = 0.5F;
+  f32 prior = 0.5F;
 
   /**
    * @brief Whether the turn flipped when transitioning to this node from parent.
@@ -337,18 +333,11 @@ class MCTS {
    */
   explicit MCTS(int iterations = 800) : maxIterations(iterations) {}
 
-  /**
-   * @brief Runs MCTS search and returns the best move.
-   * @param rootState The board state to search from.
-   * @param nodesEvaluated Out-parameter for rollout count.
-   * @return Best move ID selected by visit count.
-   */
-  int select_move(const boardState& rootState, u64& nodesEvaluated) {
-    nodesEvaluated = 0;
+  int select_move(const boardState& rootState) {
     init_tree(rootState);
 
     for (int iter = 0; iter < maxIterations; ++iter) {
-      run_iteration(nodesEvaluated);
+      run_iteration();
       if (iter > 0 && iter % MCTS_EARLY_TERM_INTERVAL == 0 && should_terminate_early()) {
         break;
       }
@@ -363,14 +352,14 @@ class MCTS {
    * @param idx Pool index.
    * @return Reference to the node.
    */
-  [[nodiscard]] MCTSNode& node_at(int idx) { return pool[static_cast<std::size_t>(idx)]; }
+  [[nodiscard]] MCTSNode& node_at(int idx) { return pool[static_cast<usize>(idx)]; }
 
   /**
    * @brief Accesses a node by pool index (const).
    * @param idx Pool index.
    * @return Const reference to the node.
    */
-  [[nodiscard]] const MCTSNode& node_at(int idx) const { return pool[static_cast<std::size_t>(idx)]; }
+  [[nodiscard]] const MCTSNode& node_at(int idx) const { return pool[static_cast<usize>(idx)]; }
 
   /**
    * @brief Initializes the search tree with a root node.
@@ -378,7 +367,7 @@ class MCTS {
    */
   void init_tree(const boardState& rootState) {
     pool.clear();
-    pool.reserve(static_cast<std::size_t>(maxIterations) + 100);
+    pool.reserve(static_cast<usize>(maxIterations) + 100);
     pool.push_back(make_node(rootState, -1, -1, false));
   }
 
@@ -412,17 +401,13 @@ class MCTS {
     }
 
     node.numLegalMoves = moves.count;
-    node.prior = mcts_score_to_value(static_cast<float>(RolloutPolicy::evaluate(state)));
+    node.prior = mcts_score_to_value(static_cast<f32>(RolloutPolicy::evaluate(state)));
     return node;
   }
 
-  /**
-   * @brief Executes one MCTS iteration: select → expand → simulate → backpropagate.
-   * @param nodesEvaluated Counter incremented per rollout.
-   */
-  void run_iteration(u64& nodesEvaluated) {
+  void run_iteration() {
     int nodeIdx = select_leaf(0);
-    float val = 0.0F;
+    f32 val = 0.0F;
 
     if (node_at(nodeIdx).isTerminal) {
       val = evaluate_terminal(node_at(nodeIdx).state);
@@ -432,7 +417,6 @@ class MCTS {
         nodeIdx = expandedIdx;
       }
       val = simulate(node_at(nodeIdx).state);
-      nodesEvaluated++;
     }
 
     backpropagate(nodeIdx, val);
@@ -483,7 +467,7 @@ class MCTS {
 
     // Re-access parent via index (safe after potential reallocation)
     int slot = node_at(nodeIdx).numChildren;
-    node_at(nodeIdx).children[static_cast<std::size_t>(slot)] = childIdx;
+    node_at(nodeIdx).children[static_cast<usize>(slot)] = childIdx;
     node_at(nodeIdx).numChildren = slot + 1;
 
     return childIdx;
@@ -512,7 +496,7 @@ class MCTS {
    * @param state Starting board state for the rollout.
    * @return Simulation result in [0, 1].
    */
-  [[nodiscard]] float simulate(boardState state) {
+  [[nodiscard]] f32 simulate(boardState state) {
     bool isP1Turn = true;
 
     for (int step = 0; step < MCTS_MAX_ROLLOUT_STEPS; ++step) {
@@ -532,12 +516,12 @@ class MCTS {
       advance_rollout(state, isP1Turn, moveId);
     }
 
-    const auto score = static_cast<float>(RolloutPolicy::evaluate(state));
-    float val = mcts_score_to_value(score);
+    const auto score = static_cast<f32>(RolloutPolicy::evaluate(state));
+    f32 val = mcts_score_to_value(score);
     return isP1Turn ? val : (1.0F - val);
   }
 
-  void backpropagate(int nodeIdx, float val) {
+  void backpropagate(int nodeIdx, f32 val) {
     while (nodeIdx != -1) {
       node_at(nodeIdx).visits += 1.0F;
       node_at(nodeIdx).valueSum += val;
@@ -561,10 +545,10 @@ class MCTS {
    * @param logParent Log of parent's visit count (for exploration term).
    * @return Combined UCT score.
    */
-  [[nodiscard]] float compute_child_uct(int childIdx, float parentWinRate, float logParent) const {
+  [[nodiscard]] f32 compute_child_uct(int childIdx, f32 parentWinRate, f32 logParent) const {
     const MCTSNode& child = node_at(childIdx);
 
-    float childWinRate = 0.0F;
+    f32 childWinRate = 0.0F;
     if (child.visits > 0.0F) {
       childWinRate = child.valueSum / child.visits;
       // If the turn flipped between parent and child, the child's value is from the
@@ -579,8 +563,8 @@ class MCTS {
       return parentWinRate - MCTS_FPU_REDUCTION + (child.prior * MCTS_BIAS_WEIGHT);
     }
 
-    float exploration = MCTS_EXPLORATION_C * std::sqrt(logParent / child.visits);
-    float bias = child.prior * MCTS_BIAS_WEIGHT / (child.visits + 1.0F);
+    f32 exploration = MCTS_EXPLORATION_C * std::sqrt(logParent / child.visits);
+    f32 bias = child.prior * MCTS_BIAS_WEIGHT / (child.visits + 1.0F);
 
     return childWinRate + exploration + bias;
   }
@@ -592,15 +576,15 @@ class MCTS {
    */
   [[nodiscard]] int best_child_uct(int nodeIdx) {
     const MCTSNode& parent = node_at(nodeIdx);
-    float parentWinRate = parent.valueSum / (parent.visits + 1e-6F);
-    float logParent = std::log(parent.visits + 1.0F);
+    f32 parentWinRate = parent.valueSum / (parent.visits + 1e-6F);
+    f32 logParent = std::log(parent.visits + 1.0F);
 
     int bestIdx = -1;
-    float bestUCT = -1e9F;
+    f32 bestUCT = -1e9F;
 
     for (int i = 0; i < parent.numChildren; ++i) {
-      int childIdx = parent.children[static_cast<std::size_t>(i)];
-      float uct = compute_child_uct(childIdx, parentWinRate, logParent);
+      int childIdx = parent.children[static_cast<usize>(i)];
+      f32 uct = compute_child_uct(childIdx, parentWinRate, logParent);
       if (uct > bestUCT) {
         bestUCT = uct;
         bestIdx = childIdx;
@@ -614,7 +598,7 @@ class MCTS {
    * @param state Terminal board state.
    * @return 1.0 for win, 0.0 for loss, 0.5 for draw.
    */
-  [[nodiscard]] static float evaluate_terminal(const boardState& state) noexcept {
+  [[nodiscard]] static f32 evaluate_terminal(const boardState& state) noexcept {
     if (piece_count(state.opp) == 0) {
       return 1.0F;
     }
@@ -636,10 +620,10 @@ class MCTS {
   [[nodiscard]] int pick_best_root_move() const {
     const MCTSNode& root = node_at(0);
     int bestMove = -1;
-    float maxVisits = -1.0F;
+    f32 maxVisits = -1.0F;
 
     for (int i = 0; i < root.numChildren; ++i) {
-      int childIdx = root.children[static_cast<std::size_t>(i)];
+      int childIdx = root.children[static_cast<usize>(i)];
       if (node_at(childIdx).visits > maxVisits) {
         maxVisits = node_at(childIdx).visits;
         bestMove = node_at(childIdx).moveId;
@@ -665,11 +649,11 @@ class MCTS {
       return true;
     }
 
-    float totalVisits = 0.0F;
-    float maxChildVisits = 0.0F;
+    f32 totalVisits = 0.0F;
+    f32 maxChildVisits = 0.0F;
 
     for (int i = 0; i < root.numChildren; ++i) {
-      float childVisits = node_at(root.children[static_cast<std::size_t>(i)]).visits;
+      f32 childVisits = node_at(root.children[static_cast<usize>(i)]).visits;
       totalVisits += childVisits;
       maxChildVisits = std::max(maxChildVisits, childVisits);
     }
@@ -696,21 +680,21 @@ class MCTS {
  * @param results Array of move IDs from each thread.
  * @return Move ID with the most votes.
  */
-template <std::size_t N>
+template <usize N>
 [[nodiscard]] inline int tally_votes(const std::array<int, N>& results) {
   std::array<int, TOTAL_MOVE_COUNT> votes{};
-  for (std::size_t voteIdx = 0; voteIdx < N; ++voteIdx) {
+  for (usize voteIdx = 0; voteIdx < N; ++voteIdx) {
     int move = results[voteIdx];
     if (move >= 0 && move < TOTAL_MOVE_COUNT) {
-      votes[static_cast<std::size_t>(move)]++;
+      votes[static_cast<usize>(move)]++;
     }
   }
 
   int bestMove = results[0];
   int bestVotes = 0;
   for (int i = 0; i < TOTAL_MOVE_COUNT; ++i) {
-    if (votes[static_cast<std::size_t>(i)] > bestVotes) {
-      bestVotes = votes[static_cast<std::size_t>(i)];
+    if (votes[static_cast<usize>(i)] > bestVotes) {
+      bestVotes = votes[static_cast<usize>(i)];
       bestMove = i;
     }
   }
@@ -726,33 +710,24 @@ template <std::size_t N>
  * @tparam Iterations Iterations per thread.
  * @tparam NumThreads Number of parallel search threads.
  * @param state Root board state.
- * @param nodes Out-parameter for total nodes evaluated.
  * @return Best move ID by majority vote.
  */
 template <typename RolloutPolicy, int Iterations, int NumThreads>
-[[nodiscard]] inline int mcts_root_parallel(const boardState& state, u64& nodes) {
+[[nodiscard]] inline int mcts_root_parallel(const boardState& state) {
   static_assert(NumThreads >= 2, "Use mcts_player_maker directly for single-threaded search.");
 
   std::array<int, NumThreads> results{};
-  std::array<u64, NumThreads> nodeCounts{};
   std::array<std::thread, NumThreads> threads{};
 
   for (int threadIdx = 0; threadIdx < NumThreads; ++threadIdx) {
-    threads[static_cast<std::size_t>(threadIdx)] = std::thread([&state, &results, &nodeCounts, threadIdx]() {
+    threads[static_cast<usize>(threadIdx)] = std::thread([&state, &results, threadIdx]() {
       MCTS<RolloutPolicy> solver(Iterations);
-      u64 localNodes = 0;
-      results[static_cast<std::size_t>(threadIdx)] = solver.select_move(state, localNodes);
-      nodeCounts[static_cast<std::size_t>(threadIdx)] = localNodes;
+      results[static_cast<usize>(threadIdx)] = solver.select_move(state);
     });
   }
 
   for (auto& thr : threads) {
     thr.join();
-  }
-
-  nodes = 0;
-  for (int threadIdx = 0; threadIdx < NumThreads; ++threadIdx) {
-    nodes += nodeCounts[static_cast<std::size_t>(threadIdx)];
   }
 
   return tally_votes(results);
@@ -766,16 +741,15 @@ template <typename RolloutPolicy, int Iterations, int NumThreads>
  * @tparam Iterations Number of MCTS iterations per search.
  * @tparam NumThreads Number of parallel threads (1 = sequential, default).
  * @param state Current board state.
- * @param nodes Out-parameter for total nodes evaluated.
  * @return Selected move ID.
  */
 template <typename RolloutPolicy, int Iterations = 800, int NumThreads = 1>
-[[nodiscard]] inline int mcts_player_maker(const boardState& state, u64& nodes) {
+[[nodiscard]] inline int mcts_player_maker(const boardState& state) {
   if constexpr (NumThreads <= 1) {
     thread_local MCTS<RolloutPolicy> solver(Iterations);
-    return solver.select_move(state, nodes);
+    return solver.select_move(state);
   } else {
-    return mcts_root_parallel<RolloutPolicy, Iterations, NumThreads>(state, nodes);
+    return mcts_root_parallel<RolloutPolicy, Iterations, NumThreads>(state);
   }
 }
 

@@ -9,16 +9,21 @@
 #include <parquet/arrow/writer.h>
 #include <parquet/exception.h>
 #include <parquet/properties.h>
+#include <sys/ioctl.h>
+#include <sys/sysinfo.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <cstddef>
-#include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
-#include <iomanip>
+#include <ftxui/component/component.hpp>
+#include <ftxui/component/screen_interactive.hpp>
+#include <ftxui/dom/canvas.hpp>
+#include <ftxui/dom/elements.hpp>
+#include <ftxui/screen/terminal.hpp>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -34,8 +39,8 @@
 
 #include "config.hpp"
 #include "kribu/benchmark.hpp"
-#include "kribu/player/_.hpp"
 #include "kribu/rules.hpp"
+#include "players.hpp"
 
 using namespace kribu::board;
 using namespace kribu::sholoGuti;
@@ -47,6 +52,110 @@ namespace {
 
 std::mutex metadataMutex;
 std::atomic<int> globalGameId{1};
+
+/**
+ * @struct CpuTimes
+ * @brief Holds CPU idle and total times.
+ */
+struct CpuTimes {
+  unsigned long long idle = 0;   ///< Idle time ticks.
+  unsigned long long total = 0;  ///< Total time ticks.
+};
+
+/**
+ * @brief Reads the current CPU times from /proc/stat.
+ * @return CpuTimes struct containing current cpu tick counts.
+ */
+CpuTimes get_cpu_times() {
+  std::ifstream file("/proc/stat");
+  std::string line;
+  if (std::getline(file, line)) {
+    std::istringstream ss(line);
+    std::string cpu;
+    ss >> cpu;
+    if (cpu == "cpu") {
+      unsigned long long user, nice, system, idle, iowait, irq, softirq, steal;
+      if (ss >> user >> nice >> system >> idle >> iowait >> irq >> softirq >> steal) {
+        CpuTimes times;
+        times.idle = idle + iowait;
+        times.total = user + nice + system + idle + iowait + irq + softirq + steal;
+        return times;
+      }
+    }
+  }
+  return {};
+}
+
+/**
+ * @brief Computes CPU usage fraction between two measurements.
+ * @param prev The previous measurement.
+ * @param curr The current measurement.
+ * @return CPU usage fraction (0.0 to 1.0).
+ */
+double calculate_cpu_usage(const CpuTimes& prev, const CpuTimes& curr) {
+  unsigned long long totalDiff = curr.total - prev.total;
+  unsigned long long idleDiff = curr.idle - prev.idle;
+  if (totalDiff == 0) {
+    return 0.0;
+  }
+  return static_cast<double>(totalDiff - idleDiff) / totalDiff;
+}
+
+/**
+ * @brief Computes the system RAM usage fraction.
+ * @return RAM usage fraction (0.0 to 1.0).
+ */
+double get_ram_usage_fraction() {
+  struct sysinfo info;
+  if (sysinfo(&info) == 0) {
+    double total = static_cast<double>(info.totalram) * info.mem_unit;
+    double freeMem = static_cast<double>(info.freeram) * info.mem_unit;
+    double buffered = static_cast<double>(info.bufferram) * info.mem_unit;
+    double used = total - freeMem - buffered;
+    return used / total;
+  }
+  return 0.0;
+}
+
+/**
+ * @brief Renders a high-resolution line graph of telemetry history using ftxui::Canvas.
+ * @param history Usage history data (fractions 0.0 to 1.0).
+ * @param width Canvas width in characters.
+ * @param height Canvas height in characters.
+ * @param color Color of the graph line.
+ * @return FTXUI Element containing the graph.
+ */
+ftxui::Element draw_graph(const std::vector<double>& history, int width, int height, ftxui::Color color) {
+  using namespace ftxui;
+  Canvas c(width, height);
+
+  int ptWidth = width * 2;
+  int ptHeight = height * 4;
+
+  // Draw background grid lines (subtle dashed horizontal lines)
+  for (int y = ptHeight / 4; y < ptHeight; y += ptHeight / 4) {
+    for (int x = 0; x < ptWidth; x += 4) {
+      c.DrawPoint(x, y, true, Color::GrayDark);
+    }
+  }
+
+  // Draw the history plot line
+  for (size_t i = 1; i < history.size(); ++i) {
+    int x1 = static_cast<int>((i - 1) * static_cast<double>(ptWidth) / history.size());
+    int y1 = ptHeight - 1 - static_cast<int>(history[i - 1] * (ptHeight - 1));
+    int x2 = static_cast<int>(i * static_cast<double>(ptWidth) / history.size());
+    int y2 = ptHeight - 1 - static_cast<int>(history[i] * (ptHeight - 1));
+
+    x1 = std::max(0, std::min(x1, ptWidth - 1));
+    y1 = std::max(0, std::min(y1, ptHeight - 1));
+    x2 = std::max(0, std::min(x2, ptWidth - 1));
+    y2 = std::max(0, std::min(y2, ptHeight - 1));
+
+    c.DrawPointLine(x1, y1, x2, y2, color);
+  }
+
+  return canvas(std::move(c));
+}
 
 /**
  * @brief Reads the highest game ID from the CSV manifest, if it exists.
@@ -107,14 +216,14 @@ GameArrays build_turn_arrays(  // NOLINT(readability-function-cognitive-complexi
   arrow::StringBuilder playerPlayedBuilder;
 
   for (const auto& turn : history) {
-    PARQUET_THROW_NOT_OK(meBuilder.Append(static_cast<int64_t>(turn.state.me)));
-    PARQUET_THROW_NOT_OK(oppBuilder.Append(static_cast<int64_t>(turn.state.opp)));
-    PARQUET_THROW_NOT_OK(activeCaptureIdxBuilder.Append(static_cast<int8_t>(turn.state.activeCaptureIdx)));
+    PARQUET_THROW_NOT_OK(meBuilder.Append(static_cast<i64>(turn.state.me)));
+    PARQUET_THROW_NOT_OK(oppBuilder.Append(static_cast<i64>(turn.state.opp)));
+    PARQUET_THROW_NOT_OK(activeCaptureIdxBuilder.Append(static_cast<i8>(turn.state.activeCaptureIdx)));
     PARQUET_THROW_NOT_OK(isP1TurnBuilder.Append(turn.isP1Turn));
-    PARQUET_THROW_NOT_OK(chosenMoveBuilder.Append(static_cast<int16_t>(turn.chosenMove)));
+    PARQUET_THROW_NOT_OK(chosenMoveBuilder.Append(static_cast<i16>(turn.chosenMove)));
     PARQUET_THROW_NOT_OK(possibleMovesBuilder.Append());
     for (int i = 0; i < turn.possibleMoves.size(); ++i) {
-      PARQUET_THROW_NOT_OK(valueBuilder->Append(static_cast<int16_t>(turn.possibleMoves.moves[i])));
+      PARQUET_THROW_NOT_OK(valueBuilder->Append(static_cast<i16>(turn.possibleMoves.moves[i])));
     }
     PARQUET_THROW_NOT_OK(playerPlayedBuilder.Append(std::string(turn.playerPlayed)));
   }
@@ -240,108 +349,122 @@ std::string reason_to_string(WinReason reason) {
  * @param p1Name Name of Player 1.
  * @param p2Name Name of Player 2.
  */
-void print_progress(int completed,
-                    int total,
-                    std::string_view p1Name,
-                    std::string_view p2Name,
-                    std::chrono::time_point<std::chrono::high_resolution_clock> start) noexcept {
-  constexpr int BAR_WIDTH = 20;
-  float progress = static_cast<float>(completed) / static_cast<float>(total);
-  int pos = static_cast<int>(BAR_WIDTH * progress);
+/**
+ * @struct MatchupState
+ * @brief Thread-safe progress and telemetry statistics for a single tournament matchup.
+ */
+struct MatchupState {
+  std::string p1Name;                                                     ///< Name of Player 1.
+  std::string p2Name;                                                     ///< Name of Player 2.
+  int games = 0;                                                          ///< Total games to play.
+  int maxTurns = 0;                                                       ///< Maximum turns per game.
+  std::atomic<int> completedGames{0};                                     ///< Atomic count of completed games.
+  std::atomic<int> p1Wins{0};                                             ///< Atomic count of Player 1 wins.
+  std::atomic<int> p2Wins{0};                                             ///< Atomic count of Player 2 wins.
+  std::atomic<int> draws{0};                                              ///< Atomic count of draws.
+  std::chrono::time_point<std::chrono::high_resolution_clock> startTime;  ///< Matchup start time.
+  std::chrono::time_point<std::chrono::high_resolution_clock> endTime;    ///< Matchup end time.
+  bool active = false;                                                    ///< True if matchup is currently running.
+  bool completed = false;                                                 ///< True if matchup is fully completed.
+  MatchStats stats;                                                       ///< Final matchup statistics.
+  bool registered = true;  ///< True if both players are registered in players map.
+};
 
-  auto now = std::chrono::high_resolution_clock::now();
-  auto elapsedSecs = std::chrono::duration<double>(now - start).count();
-  double etaSecs = 0.0;
-  if (completed > 0 && completed < total) {
-    etaSecs = (elapsedSecs / completed) * (total - completed);
-  }
+/**
+ * @brief Renders a single row in the matchup list panel.
+ * @param match The matchup state.
+ * @param index The matchup index.
+ * @param isActive True if this matchup is currently active.
+ * @return FTXUI Element representing the matchup row.
+ */
+ftxui::Element render_matchup_row(const MatchupState& match, int index, bool isActive) {
+  using namespace ftxui;
+  std::string statusStr = "[PENDING] ";
+  Color statusColor = Color::GrayDark;
 
-  std::cout << "\rMatchup: " << p1Name << " vs " << p2Name << " | [";
-  for (int i = 0; i < BAR_WIDTH; ++i) {
-    if (i < pos) {
-      std::cout << "=";
-    } else if (i == pos) {
-      std::cout << ">";
+  if (match.completed) {
+    if (!match.registered) {
+      statusStr = "[SKIPPED] ";
+      statusColor = Color::Yellow;
     } else {
-      std::cout << " ";
+      statusStr = "[DONE]    ";
+      statusColor = Color::Green;
     }
-  }
-  std::cout << "] " << static_cast<int>(progress * 100.0) << "% (" << completed << "/" << total << ")";
-
-  if (completed > 0 && completed < total) {
-    std::cout << " ETA: " << std::fixed << std::setprecision(1) << etaSecs << "s";
-  } else if (completed == total) {
-    std::cout << " Time: " << std::fixed << std::setprecision(1) << elapsedSecs << "s";
+  } else if (match.active) {
+    statusStr = "[ACTIVE]  ";
+    statusColor = Color::Cyan;
   }
 
-  std::cout << "       " << std::flush;
+  auto statusEl = bold(text(statusStr)) | color(statusColor);
+  auto playersEl =
+      hbox({text(match.p1Name) | color(Color::Cyan), text(" vs "), text(match.p2Name) | color(Color::Magenta)});
+
+  Element statsEl = text("");
+  if (match.completed && match.registered) {
+    statsEl = text("  (" + std::to_string(match.stats.p1Wins) + "-" + std::to_string(match.stats.p2Wins) + "-"
+                   + std::to_string(match.stats.draws) + ")")
+              | color(Color::GrayLight);
+  } else if (match.active) {
+    statsEl = text("  (" + std::to_string(match.p1Wins.load()) + "-" + std::to_string(match.p2Wins.load()) + "-"
+                   + std::to_string(match.draws.load()) + ")")
+              | color(Color::Yellow);
+  }
+
+  Element rowEl =
+      hbox({text(std::to_string(index + 1) + ". ") | color(Color::GrayLight), statusEl, playersEl, statsEl});
+
+  if (isActive) {
+    rowEl = bold(rowEl) | bgcolor(Color::Blue);
+  }
+  return rowEl;
 }
 
 /**
- * @brief Runs a tournament matchup between two players in a multithreaded fashion.
- * @param match Configuration for the matchup.
- * @param players Map of registered players.
- * @param summaryTable Table to write results summary row to.
+ * @brief Renders the active matchup panel with live telemetry and progress gauges.
+ * @param match The active matchup state.
+ * @return FTXUI Element representing the active panel.
  */
-void run_matchup(const MatchConfig& match,
-                 const std::map<std::string, Player>& players,
-                 tabulate::Table& summaryTable) {
-  if (!players.contains(std::string(match.player1Name)) || !players.contains(std::string(match.player2Name))) {
-    std::cerr << "Skipping matchup " << match.player1Name << " vs " << match.player2Name
-              << ": one or both players not registered.\n";
-    return;
+ftxui::Element render_active_panel(const MatchupState& match) {
+  using namespace ftxui;
+  int completed = match.completedGames.load();
+  float progress = (match.games > 0) ? static_cast<float>(completed) / match.games : 0.0F;
+
+  auto now = std::chrono::high_resolution_clock::now();
+  double elapsedSecs = std::chrono::duration<double>(now - match.startTime).count();
+  double etaSecs = 0.0;
+  if (completed > 0 && completed < match.games) {
+    etaSecs = (elapsedSecs / completed) * (match.games - completed);
   }
 
-  const auto& playerFirst = players.at(std::string(match.player1Name));
-  const auto& playerSecond = players.at(std::string(match.player2Name));
+  auto progressGauge = gauge(progress) | color(Color::Cyan);
+  std::string progressText = std::to_string(static_cast<int>(progress * 100.0F)) + "% (" + std::to_string(completed)
+                             + "/" + std::to_string(match.games) + ")";
 
-  std::atomic<int> completedGames{0};
-  auto startTime = std::chrono::high_resolution_clock::now();
+  auto timeInfo = hbox({text("Elapsed: ") | color(Color::GrayLight),
+                        bold(text(std::to_string(static_cast<int>(elapsedSecs)) + "s")) | color(Color::White),
+                        text(" | ETA: ") | color(Color::GrayLight),
+                        bold(text(completed == match.games ? "0s" : std::to_string(static_cast<int>(etaSecs)) + "s"))
+                            | color(Color::Yellow)});
 
-  std::thread progressThread([&completedGames, &match, &playerFirst, &playerSecond, startTime]() {
-    while (true) {
-      int completed = completedGames.load(std::memory_order_relaxed);
-      print_progress(completed, match.games, playerFirst.name, playerSecond.name, startTime);
-      if (completed >= match.games) {
-        break;
-      }
-      std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    }
-  });
+  auto statsInfo =
+      vbox({hbox({text("P1 Wins: ") | color(Color::Cyan), bold(text(std::to_string(match.p1Wins.load())))}),
+            hbox({text("P2 Wins: ") | color(Color::Magenta), bold(text(std::to_string(match.p2Wins.load())))}),
+            hbox({text("Draws:   ") | color(Color::Yellow), bold(text(std::to_string(match.draws.load())))})});
 
-  MatchStats stats = run_matchup_multithreaded(playerFirst,
-                                               playerSecond,
-                                               TournamentConfig{.totalGames = match.games,
-                                                                .maxTurns = match.maxTurns,
-                                                                .threadCount = THREAD_COUNT,
-                                                                .completedGames = &completedGames,
-                                                                .globalGameId = &globalGameId});
-
-  if (progressThread.joinable()) {
-    progressThread.join();
-  }
-  std::cout << "\rMatchup: " << playerFirst.name << " vs " << playerSecond.name
-            << " | Done!                                    \n";
-
-  double p1AvgNodes = static_cast<double>(stats.p1TotalNodes) / match.games;
-  double p2AvgNodes = static_cast<double>(stats.p2TotalNodes) / match.games;
-  double p1AvgCpuMs = (stats.p1TotalCpuTimeSeconds * 1000.0) / match.games;
-  double p2AvgCpuMs = (stats.p2TotalCpuTimeSeconds * 1000.0) / match.games;
-  double avgTurns = static_cast<double>(stats.totalTurns) / match.games;
-
-  summaryTable.add_row(
-      {std::string(playerFirst.name),
-       std::string(playerSecond.name),
-       std::to_string(stats.p1Wins) + " (" + std::to_string(stats.p1EliminationWins) + "/"
-           + std::to_string(stats.p1StalemateWins) + "/" + std::to_string(stats.p1InvalidMoveWins) + ")",
-       std::to_string(stats.p2Wins) + " (" + std::to_string(stats.p2EliminationWins) + "/"
-           + std::to_string(stats.p2StalemateWins) + "/" + std::to_string(stats.p2InvalidMoveWins) + ")",
-       std::to_string(stats.draws),
-       std::to_string(static_cast<int>(avgTurns)),
-       std::to_string(static_cast<int>(p1AvgNodes)),
-       std::to_string(static_cast<int>(p2AvgNodes)),
-       std::to_string(static_cast<int>(p1AvgCpuMs)) + " ms",
-       std::to_string(static_cast<int>(p2AvgCpuMs)) + " ms"});
+  return border(vbox(
+             {center(bold(text("ACTIVE MATCHUP DETAILS"))) | color(Color::Yellow),
+              separator(),
+              hbox({text("Player 1 (P1): ") | color(Color::GrayLight), bold(text(match.p1Name)) | color(Color::Cyan)}),
+              hbox({text("Player 2 (P2): ") | color(Color::GrayLight),
+                    bold(text(match.p2Name)) | color(Color::Magenta)}),
+              separator(),
+              hbox({text("Progress: "), progressGauge, text(" " + progressText)}),
+              separator(),
+              timeInfo,
+              separator(),
+              statsInfo,
+              filler()}))
+         | color(Color::Blue) | flex;
 }
 
 }  // namespace
@@ -350,7 +473,7 @@ void run_matchup(const MatchConfig& match,
  * @brief Saves a completed game dataset directly to a Parquet file, storing metadata in the schema footer.
  * @param player1Name Name of Player 1.
  * @param player2Name Name of Player 2.
- * @param gameIdx The unique game index in the tournament matchup.
+ * @param gameId The unique game index in the tournament matchup.
  * @param outcome The result and win reason of the game.
  * @param history The sequence of moves played during the game.
  */
@@ -410,25 +533,40 @@ void save_game_parquet(std::string_view player1Name,
  * @return 0 on success, non-zero on error.
  */
 int main() {
+  using namespace ftxui;
+
   kribu::maxRepetitions = kribu::benchmark::REPETITION_LIMIT;
   kribu::allowRepetition = kribu::benchmark::ALLOW_REPETITION;
   try {
     std::filesystem::create_directories("benchmark");
 
-    int lastId = find_max_id_from_csv("benchmark/manifest.csv");
+    int lastId = kribu::benchmark::find_max_id_from_csv("benchmark/manifest.csv");
     globalGameId.store(lastId + 1, std::memory_order_relaxed);
 
     const auto playerList = kribu::player::BENCHMARK_PLAYERS;
     std::map<std::string, Player> players;
     for (const auto& playerEntry : playerList) {
       players[std::string(playerEntry.name)] = playerEntry;
-      std::cout << "Registered player: " << playerEntry.name << "\n";
     }
 
     const auto matchups = BENCHMARK_MATCHUPS;
 
-    std::cout << "\nStarting " << matchups.size() << " matchups with " << THREAD_COUNT << " threads (starting from ID "
-              << (lastId + 1) << ")...\n\n";
+    // Convert matchups to states for FTXUI tracking
+    std::vector<std::unique_ptr<MatchupState>> matchupsList;
+    matchupsList.reserve(matchups.size());
+    for (const auto& match : matchups) {
+      auto state = std::make_unique<MatchupState>();
+      state->p1Name = std::string(match.player1Name);
+      state->p2Name = std::string(match.player2Name);
+      state->games = match.games;
+      state->maxTurns = match.maxTurns;
+
+      if (!players.contains(state->p1Name) || !players.contains(state->p2Name)) {
+        state->registered = false;
+        state->completed = true;
+      }
+      matchupsList.push_back(std::move(state));
+    }
 
     tabulate::Table summaryTable;
     summaryTable.add_row({"Player 1",
@@ -437,13 +575,197 @@ int main() {
                           "P2 Wins (Elim/Stale/Inv)",
                           "Draws",
                           "Avg Turns",
-                          "P1 Avg Nodes",
-                          "P2 Avg Nodes",
                           "P1 Avg CPU",
                           "P2 Avg CPU"});
 
-    for (const auto& match : matchups) {
-      kribu::benchmark::run_matchup(match, players, summaryTable);
+    auto screen = ScreenInteractive::Fullscreen();
+    std::atomic<bool> tournamentCompleted{false};
+    std::atomic<bool> abortRequested{false};
+
+    // System Telemetry History
+    std::vector<double> cpuHistory(128, 0.0);
+    std::vector<double> ramHistory(128, 0.0);
+    CpuTimes prevCpu = get_cpu_times();
+
+    // background runner thread
+    std::thread tournamentThread([&]() {
+      for (size_t i = 0; i < matchupsList.size(); ++i) {
+        if (abortRequested.load(std::memory_order_relaxed)) {
+          break;
+        }
+        auto& match = *matchupsList[i];
+        if (!match.registered) {
+          continue;
+        }
+
+        match.active = true;
+        match.startTime = std::chrono::high_resolution_clock::now();
+
+        const auto& playerFirst = players.at(match.p1Name);
+        const auto& playerSecond = players.at(match.p2Name);
+
+        match.stats = run_matchup_multithreaded(playerFirst,
+                                                playerSecond,
+                                                TournamentConfig{.totalGames = match.games,
+                                                                 .maxTurns = match.maxTurns,
+                                                                 .threadCount = THREAD_COUNT,
+                                                                 .completedGames = &match.completedGames,
+                                                                 .globalGameId = &globalGameId,
+                                                                 .p1Wins = &match.p1Wins,
+                                                                 .p2Wins = &match.p2Wins,
+                                                                 .draws = &match.draws,
+                                                                 .abortRequested = &abortRequested});
+
+        match.endTime = std::chrono::high_resolution_clock::now();
+        match.active = false;
+        match.completed = true;
+
+        f64 p1AvgCpuMs = (match.stats.p1TotalCpuTimeSeconds * 1000.0) / match.games;
+        f64 p2AvgCpuMs = (match.stats.p2TotalCpuTimeSeconds * 1000.0) / match.games;
+        f64 avgTurns = static_cast<f64>(match.stats.totalTurns) / match.games;
+
+        summaryTable.add_row({match.p1Name,
+                              match.p2Name,
+                              std::to_string(match.stats.p1Wins) + " (" + std::to_string(match.stats.p1EliminationWins)
+                                  + "/" + std::to_string(match.stats.p1StalemateWins) + "/"
+                                  + std::to_string(match.stats.p1InvalidMoveWins) + ")",
+                              std::to_string(match.stats.p2Wins) + " (" + std::to_string(match.stats.p2EliminationWins)
+                                  + "/" + std::to_string(match.stats.p2StalemateWins) + "/"
+                                  + std::to_string(match.stats.p2InvalidMoveWins) + ")",
+                              std::to_string(match.stats.draws),
+                              std::to_string(static_cast<int>(avgTurns)),
+                              std::to_string(static_cast<int>(p1AvgCpuMs)) + " ms",
+                              std::to_string(static_cast<int>(p2AvgCpuMs)) + " ms"});
+
+        screen.PostEvent(Event::Custom);
+      }
+      tournamentCompleted.store(true);
+      screen.PostEvent(Event::Custom);
+    });
+
+    // ui component definition
+    auto renderer = Renderer([&]() {
+      Elements listElements;
+      int activeIndex = -1;
+      int completedCount = 0;
+
+      for (size_t i = 0; i < matchupsList.size(); ++i) {
+        if (matchupsList[i]->active) {
+          activeIndex = static_cast<int>(i);
+        }
+        if (matchupsList[i]->completed) {
+          completedCount++;
+        }
+      }
+
+      int termWidth = screen.dimx() <= 0 ? 80 : screen.dimx();
+      int termHeight = screen.dimy() <= 0 ? 24 : screen.dimy();
+
+      int graphHeight = std::max(6, std::min(12, termHeight / 4));
+
+      for (size_t i = 0; i < matchupsList.size(); ++i) {
+        listElements.push_back(
+            render_matchup_row(*matchupsList[i], static_cast<int>(i), static_cast<int>(i) == activeIndex));
+      }
+
+      Element activePanel = border(center(text("No active matchup"))) | flex;
+      if (activeIndex != -1) {
+        activePanel = render_active_panel(*matchupsList[activeIndex]);
+      } else if (completedCount == static_cast<int>(matchupsList.size())) {
+        activePanel = border(vbox({center(bold(text("TOURNAMENT COMPLETED!"))) | color(Color::Green),
+                                   center(text("Finalizing summary table...")) | color(Color::GrayLight),
+                                   filler()}))
+                      | color(Color::Green) | flex;
+      }
+
+      float overallProgress = static_cast<float>(completedCount) / matchupsList.size();
+      auto overallGauge = gauge(overallProgress) | color(Color::Green);
+      std::string overallText =
+          std::to_string(completedCount) + "/" + std::to_string(matchupsList.size()) + " matchups done";
+
+      auto header = border(
+          vbox({center(bold(text(" KRIBU ENGINE BENCHMARK TOURNAMENT "))) | color(Color::Yellow) | bgcolor(Color::Blue),
+                center(hbox({text(" Threads: ") | color(Color::GrayLight),
+                             bold(text(std::to_string(THREAD_COUNT))) | color(Color::White),
+                             text(" | Global ID start: ") | color(Color::GrayLight),
+                             bold(text(std::to_string(lastId + 1))) | color(Color::White)}))}));
+
+      auto footer = border(vbox({hbox({text("Overall Tournament Progress: "), overallGauge, text(" " + overallText)}),
+                                 center(text("Press 'q' twice to stop")) | color(Color::GrayDark)}))
+                    | color(Color::Green);
+
+      auto body = hbox({border(vbox({center(bold(text("Matchup Queue Window"))) | color(Color::Cyan),
+                                     separator(),
+                                     vbox(std::move(listElements)),
+                                     filler()}))
+                            | color(Color::Cyan) | flex,
+                        activePanel});
+
+      int graphWidth = std::max(20, (termWidth - 8) / 2);
+      auto cpuGraph = draw_graph(cpuHistory, graphWidth, graphHeight, Color::Green);
+      auto ramGraph = draw_graph(ramHistory, graphWidth, graphHeight, Color::Yellow);
+
+      auto sysPanel =
+          border(hbox({flex(vbox({hbox({bold(text("CPU Usage: ")),
+                                        bold(text(std::to_string(static_cast<int>(cpuHistory.back() * 100.0)) + "%"))
+                                            | color(Color::Green)}),
+                                  cpuGraph})),
+                       separator(),
+                       flex(vbox({hbox({bold(text("RAM Usage: ")),
+                                        bold(text(std::to_string(static_cast<int>(ramHistory.back() * 100.0)) + "%"))
+                                            | color(Color::Yellow)}),
+                                  ramGraph}))}))
+          | color(Color::GrayDark);
+
+      return vbox({header, flex(body), sysPanel, footer}) | size(WIDTH, EQUAL, termWidth)
+             | size(HEIGHT, EQUAL, termHeight);
+    });
+
+    int qPressCount = 0;
+    auto component = renderer | CatchEvent([&](Event event) {
+                       if (event.is_character() && event.character() == "q") {
+                         qPressCount++;
+                         if (qPressCount >= 2) {
+                           abortRequested.store(true);
+                           tournamentCompleted.store(true);
+                           screen.ExitLoopClosure()();
+                           return true;
+                         }
+                       } else {
+                         qPressCount = 0;
+                       }
+                       return false;
+                     });
+
+    std::thread refreshThread([&]() {
+      while (!tournamentCompleted.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+        CpuTimes currCpu = get_cpu_times();
+        double cpuUsage = calculate_cpu_usage(prevCpu, currCpu);
+        prevCpu = currCpu;
+
+        double ramUsage = get_ram_usage_fraction();
+
+        std::rotate(cpuHistory.begin(), cpuHistory.begin() + 1, cpuHistory.end());
+        cpuHistory.back() = cpuUsage;
+
+        std::rotate(ramHistory.begin(), ramHistory.begin() + 1, ramHistory.end());
+        ramHistory.back() = ramUsage;
+
+        screen.PostEvent(Event::Custom);
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      screen.ExitLoopClosure()();
+    });
+
+    screen.Loop(component);
+
+    if (tournamentThread.joinable()) {
+      tournamentThread.join();
+    }
+    if (refreshThread.joinable()) {
+      refreshThread.join();
     }
 
     // Format summaryTable for premium terminal DX
@@ -453,7 +775,7 @@ int main() {
         .font_align(tabulate::FontAlign::center)
         .font_color(tabulate::Color::yellow);
 
-    for (size_t i = 1; i < summaryTable.size(); ++i) {
+    for (usize i = 1; i < summaryTable.size(); ++i) {
       summaryTable[i][0].format().font_style({tabulate::FontStyle::bold}).font_color(tabulate::Color::cyan);
       summaryTable[i][1].format().font_style({tabulate::FontStyle::bold}).font_color(tabulate::Color::magenta);
     }

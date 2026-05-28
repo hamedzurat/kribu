@@ -4,25 +4,25 @@ The **Random Player** is a baseline agent for the Sholo Guti engine. It makes mo
 
 ## Overview
 
-The random player is implemented in \[random.hpp\](file:///home/hz/file/git/kribu/engine/include/kribu/player/random.hpp). It uses a thread-local fast pseudo-random number generator (`rng` from \[fast_rng.hpp\](file:///home/hz/file/git/kribu/engine/include/kribu/fast_rng.hpp)) to select a move uniformly at random from the list of all legally available moves.
+The random player is implemented in [random.hpp](../engine/include/kribu/player/random.hpp). It uses a thread-local fast pseudo-random number generator (`rng` from [fast_rng.hpp](../engine/include/kribu/fast_rng.hpp)) to select a move uniformly at random from the list of all legally available moves.
+
+______________________________________________________________________
 
 ## Algorithm Details
 
 ### `select_random`
 
 ```cpp
-inline int select_random(const boardState& state, u64& nodes)
+inline int select_random(const boardState& state)
 ```
 
 The function performs the following steps:
 
-1. Sets the output parameter `nodes` to `1` (since it only evaluates the current root state).
 1. Computes the list of all legal moves for the current state using `all_possible_moves(state)`.
 1. If no legal moves are available (stalemate/loss), it returns `-1`.
 1. Otherwise, it uses `std::uniform_int_distribution` to generate a random index within the move list bounds and returns the move ID at that index.
 
-> [!NOTE]
-> Setting `nodes = 1` is critical for benchmark consistency, representing that only the root node was visited to make the decision.
+______________________________________________________________________
 
 ## Control Flow
 
@@ -30,8 +30,7 @@ Below is the control flow of the random player's decision-making process:
 
 ```mermaid
 flowchart TD
-    Start([Start: select_random]) --> InitNodes[Set nodes = 1]
-    InitNodes --> GenMoves[Get all legal moves via all_possible_moves]
+    Start([Start: select_random]) --> GenMoves[Get all legal moves via all_possible_moves]
     GenMoves --> CheckEmpty{Are moves empty?}
 
     CheckEmpty -- Yes --> ReturnNoMove[Return -1]

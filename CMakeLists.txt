@@ -2,16 +2,27 @@ cmake_minimum_required(VERSION 3.24)
 project(kribu LANGUAGES CXX)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Configure compiler launcher (ccache) if available
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+  message(STATUS "Using ccache: ${CCACHE_PROGRAM}")
+  set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+  set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Enable compiler optimizations and warnings
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  add_compile_options(-Wall -Wextra -Wpedantic -Wno-c2y-extensions)
-
-  if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    add_compile_options(-O3 -march=native -mtune=native)
-  endif()
+  add_compile_options(
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Wno-c2y-extensions
+    -O3
+    -march=native
+    -mtune=native)
 endif()
 
 # Setup CPM

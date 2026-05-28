@@ -159,11 +159,6 @@ struct KillerTable {
  */
 struct SearchContext {
   /**
-   * @brief Counter tracking total nodes evaluated / visited.
-   */
-  u64 nodeCounter = 0;
-
-  /**
    * @brief Pointer to the transposition table used during search.
    */
   TranspositionTable* transTable = nullptr;
@@ -308,8 +303,6 @@ template <auto EvalFunc>
                                                         i32 alpha,
                                                         i32 beta,
                                                         SearchContext& ctx) noexcept {
-  ctx.nodeCounter++;
-
   i32 standPat = EvalFunc(state);
   if (standPat >= beta) {
     return MinimaxResult{.score = beta, .moveId = -1};
@@ -641,8 +634,6 @@ template <auto EvalFunc>
 template <auto EvalFunc>
 [[nodiscard]] constexpr MinimaxResult alpha_beta(
     const boardState& state, int depth, i32 alpha, i32 beta, SearchContext& ctx, bool isRoot) noexcept {
-  ctx.nodeCounter++;
-
   // Terminal checks
   MinimaxResult termResult;
   if (check_terminal(state, depth, termResult, isRoot)) {
@@ -770,11 +761,7 @@ template <auto EvalFunc, int NumThreads>
 [[nodiscard]] inline MinimaxResult lazy_smp_search(const boardState& state,
                                                    int targetDepth,
                                                    SearchContext& ctx) noexcept {
-  static_assert(NumThreads >= 1, "NumThreads must be at least 1");
-
-  if constexpr (NumThreads == 1) {
-    return iterative_deepening<EvalFunc>(state, targetDepth, ctx);
-  }
+  static_assert(NumThreads >= 2, "NumThreads must be at least 2");
 
   struct ThreadResult {
     MinimaxResult result{};
@@ -798,7 +785,6 @@ template <auto EvalFunc, int NumThreads>
       }
 
       results[threadIdx].result = iterative_deepening<EvalFunc>(state, threadDepth, localCtx);
-      results[threadIdx].nodes = localCtx.nodeCounter;
     });
   }
 
@@ -809,9 +795,7 @@ template <auto EvalFunc, int NumThreads>
   // Pick best result: prefer the deepest-searching thread (thread 0),
   // but take any thread's result if it found a clearly better score
   MinimaxResult best = results[0].result;
-  ctx.nodeCounter = 0;
   for (int threadIdx = 0; threadIdx < NumThreads; ++threadIdx) {
-    ctx.nodeCounter += results[threadIdx].nodes;
     if (results[threadIdx].result.score > best.score) {
       best = results[threadIdx].result;
     }
@@ -827,27 +811,20 @@ template <auto EvalFunc, int NumThreads>
  * @param depth The maximum search depth remaining.
  * @param alpha The lower bound score of the search window.
  * @param beta The upper bound score of the search window.
- * @param nodeCounter Counter tracking evaluated / visited nodes.
  * @param transTable Optional pointer to transposition table.
  * @return A MinimaxResult containing the best score and best move ID.
  */
 template <auto EvalFunc>
-[[nodiscard]] inline MinimaxResult minimax(const boardState& state,
-                                           int depth,
-                                           i32 alpha,
-                                           i32 beta,
-                                           u64& nodeCounter,
-                                           TranspositionTable* transTable = nullptr) noexcept {
+[[nodiscard]] inline MinimaxResult minimax(
+    const boardState& state, int depth, i32 alpha, i32 beta, TranspositionTable* transTable = nullptr) noexcept {
   // alpha/beta kept for interface compatibility; iterative deepening manages its own windows
   (void) alpha;
   (void) beta;
 
   SearchContext ctx;
   ctx.transTable = transTable;
-  ctx.nodeCounter = 0;
 
   MinimaxResult res = iterative_deepening<EvalFunc>(state, depth, ctx);
-  nodeCounter += ctx.nodeCounter;
   return res;
 }
 
@@ -855,37 +832,30 @@ template <auto EvalFunc>
  * @brief Compatibility wrapper for minimax search.
  */
 [[nodiscard]] inline MinimaxResult minimax(const boardState& state, int depth, i32 alpha, i32 beta) noexcept {
-  u64 dummy = 0;
   return minimax<heuristics::evaluate_by_node_values<heuristics::HEURISTIC_NODE_WEIGHTS>>(
-      state, depth, alpha, beta, dummy, nullptr);
+      state, depth, alpha, beta, nullptr);
 }
 
 /**
  * @brief Player maker utilizing minimax search with all optimizations.
  * @details Uses iterative deepening, PVS, null-move pruning, LMR, aspiration
- * windows, killer moves, and Lazy SMP parallelism.
+ *          windows, killer moves, and Lazy SMP parallelism.
  * @tparam EvalFunc Heuristic function evaluating the board state.
  * @tparam Depth The search depth.
- * @tparam NumThreads Number of parallel Lazy SMP threads (default 1 = sequential).
+ * @tparam NumThreads Number of parallel Lazy SMP threads.
  * @param state The current board state.
- * @param nodes Out-parameter tracking explored states.
- * @param madness Percentage chance to play a random move (0-100).
  * @return The selected move ID.
  */
-template <auto EvalFunc, int Depth, int NumThreads = 1>
-[[nodiscard]] inline int minimax_player_maker(const boardState& state, u64& nodes, int madness = 0) {
-  if (madness > 0) {
-    std::uniform_int_distribution<int> dist(0, 99);
-    if (dist(rng) < madness) {
-      return select_random(state, nodes);
-    }
-  }
+template <auto EvalFunc, int Depth, int NumThreads = 2>
+[[nodiscard]] inline int minimax_player_maker(const boardState& state) {
+  static_assert(Depth >= 2, "Depth must be at least 2");
+  static_assert(NumThreads >= 2, "NumThreads must be at least 2");
+
   thread_local TranspositionTable localTT(1048576);
   SearchContext ctx;
   ctx.transTable = &localTT;
 
   MinimaxResult res = lazy_smp_search<EvalFunc, NumThreads>(state, Depth, ctx);
-  nodes = ctx.nodeCounter;
   return res.moveId;
 }
 

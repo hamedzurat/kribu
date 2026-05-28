@@ -1,4 +1,4 @@
-.PHONY: setup build release hot-build test test-cpp test-python clean format lint run benchmark view-benchmark doc doc-view generate train todo
+.PHONY: setup build hot-build test test-cpp test-python clean format lint run benchmark view-benchmark doc doc-view generate train todo
 
 # Detect number of processors for parallel execution
 NPROC := $(shell nproc)
@@ -17,12 +17,7 @@ setup:
 build:
 	uv run cmake -B build -S .
 	uv run cmake --build build -j$(NPROC)
-
-release:
-# 	trash build_release || true
-	uv run cmake -B build_release -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$(PREFIX)
-	uv run cmake --build build_release -j$(NPROC)
-	uv run cmake --install build_release
+	ccache -s
 
 hot-build:
 	@command -v entr >/dev/null 2>&1 || (echo "Error: 'entr' is not installed. Please install it to use hot-build." && exit 1)
@@ -39,8 +34,8 @@ test-python:
 run:
 	PYTHONPATH=python/src uv run python python/src/kribu/main.py
 
-benchmark:
-	./build_release/engine/benchmark/kribu_benchmark_main
+benchmark: build
+	./build/engine/benchmark/kribu_benchmark_main
 
 view-benchmark:
 	PYTHONPATH=python/src uv run python3 scripts/view_game.py $(FILE)

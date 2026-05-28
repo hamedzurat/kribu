@@ -4,7 +4,7 @@ The **MCTS Player** is a simulation-based agent that uses Monte Carlo Tree Searc
 
 ## Overview
 
-The MCTS player is implemented in \[mcts.hpp\](file:///home/hz/file/git/kribu/engine/include/kribu/player/mcts.hpp). It extends the standard Upper Confidence Bound for Trees (UCT) formula with several heuristic and performance optimizations to make it highly competitive in Sholo Guti.
+The MCTS player is implemented in [mcts.hpp](../engine/include/kribu/player/mcts.hpp). It extends the standard Upper Confidence Bound for Trees (UCT) formula with several heuristic and performance optimizations to make it highly competitive in Sholo Guti.
 
 ______________________________________________________________________
 
@@ -19,11 +19,11 @@ Starting at the root node, the engine traverses down the tree by selecting the c
 The UCT formula is enhanced with **Progressive Bias** and **First Play Urgency (FPU)**:
 
 - **Visited Children**:
-  $$\text{UCT} = \text{childWinRate} + C \times \sqrt{\frac{\ln(\text{parentVisits})}{\text{childVisits}}} + \frac{\text{prior} \times \text{BIAS\\_WEIGHT}}{\text{childVisits} + 1}$$
-  where $C = \sqrt{2}$ and `prior` is the heuristic evaluation of the board state normalized to $[0, 1]$.
+  $$\\text{UCT} = \\text{childWinRate} + C \\times \\sqrt{\\frac{\\ln(\\text{parentVisits})}{\\text{childVisits}}} + \\frac{\\text{prior} \\times \\text{BIAS_WEIGHT}}{\\text{childVisits} + 1}$$
+  where $C = \\sqrt{2}$ and `prior` is the heuristic evaluation of the board state normalized to $[0, 1]$.
 - **Unvisited Children (First Play Urgency)**:
   Instead of forcing a round-robin exploration of every single child, unvisited children receive an initial score:
-  $$\text{UCT} = \text{parentWinRate} - \text{FPU\\_REDUCTION} + (\text{prior} \times \text{BIAS\\_WEIGHT})$$
+  $$\\text{UCT} = \\text{parentWinRate} - \\text{FPU_REDUCTION} + (\\text{prior} \\times \\text{BIAS_WEIGHT})$$
   This allows the tree policy to ignore clearly bad moves and focus exploration on promising paths immediately.
 
 ### 2. Expansion
@@ -52,7 +52,7 @@ ______________________________________________________________________
 
 ### Root Parallelism
 
-When configured with multiple threads (`NumThreads > 1`), the engine uses **Root Parallelism**:
+When configured with multiple threads (`NumThreads >= 2`), the engine uses **Root Parallelism**:
 
 - It spawns independent MCTS search trees on separate threads.
 - Each thread runs the full iteration budget.

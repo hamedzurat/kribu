@@ -12,5 +12,8 @@
   - **YAGNI**: Do not add functionality until it is needed. Avoid speculative refactoring or over-engineering for hypothetical future requirements.
   - **DRY**: Do not repeat yourself. Abstract common patterns and reuse code instead of duplicating it.
 - **Tests**: Every new feature must include tests. (`make test` to run all tests, `make test-cpp` to run C++ tests, `make test-python` to run Python tests.)
-- **Doc**: Use Doxygen style comments. Use it for all functions, classes, and macros.
+- **Doc**:
+  - Use Doxygen style comments. Use it for all functions, classes, and macros.
+  - For .md in ./doc, use relative file paths instead of absolute file paths.
+  - Use mermaid diagram whenever possible and use `""` for string so that syntax doesn't break.
 - **Agent**: When running long time consuming command wait for 60s not 10s.

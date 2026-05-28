@@ -6,7 +6,6 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/vector.h>
 
-#include <cstddef>
 #include <kribu/board.hpp>
 #include <kribu/player/minimax.hpp>
 #include <kribu/rules.hpp>
@@ -25,7 +24,7 @@ using namespace kribu::player;
 static std::vector<int> all_possible_moves_py(const boardState& state) {
   MoveList moves = all_possible_moves(state);
   std::vector<int> result;
-  result.reserve(static_cast<std::size_t>(moves.size()));
+  result.reserve(static_cast<usize>(moves.size()));
   for (i16 mid : moves) {
     result.push_back(static_cast<int>(mid));
   }

@@ -7,8 +7,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <cstddef>
-#include <cstdint>
 #include <mutex>
 #include <string_view>
 #include <thread>
@@ -47,13 +45,13 @@ struct MatchConfig {
  * @enum GameResult
  * @brief Represents the outcome of a single match.
  */
-enum class GameResult : std::uint8_t { P1_WINS, P2_WINS, DRAW };
+enum class GameResult : u8 { P1_WINS, P2_WINS, DRAW };
 
 /**
  * @enum WinReason
  * @brief Represents the reason why a player won or the game ended.
  */
-enum class WinReason : std::uint8_t { ELIMINATION, STALEMATE, INVALID_MOVE, DRAW_MAX_TURNS, REPETITION };
+enum class WinReason : u8 { ELIMINATION, STALEMATE, INVALID_MOVE, DRAW_MAX_TURNS, REPETITION };
 
 /**
  * @struct GameOutcome
@@ -72,7 +70,8 @@ struct GameOutcome {
  */
 struct Player {
   std::string_view name;
-  int (*select)(const boardState&, u64&) = nullptr;
+  int (*select)(const boardState&) = nullptr;
+  int madness = 0;
 };
 
 /**
@@ -91,10 +90,8 @@ struct MatchStats {
   int p2EliminationWins = 0;
   int p2StalemateWins = 0;
   int p2InvalidMoveWins = 0;
-  u64 p1TotalNodes = 0;
-  u64 p2TotalNodes = 0;
-  double p1TotalCpuTimeSeconds = 0.0;
-  double p2TotalCpuTimeSeconds = 0.0;
+  f64 p1TotalCpuTimeSeconds = 0.0;
+  f64 p2TotalCpuTimeSeconds = 0.0;
   u64 totalTurns = 0;
 };
 
@@ -103,8 +100,7 @@ struct MatchStats {
  * @brief Performance telemetry for a player during a game.
  */
 struct PlayerPerformance {
-  u64 nodes = 0;
-  double cpuTimeSeconds = 0.0;
+  f64 cpuTimeSeconds = 0.0;
 };
 
 /**
@@ -126,6 +122,10 @@ struct TournamentConfig {
   int threadCount = 0;
   std::atomic<int>* completedGames = nullptr;
   std::atomic<int>* globalGameId = nullptr;
+  std::atomic<int>* p1Wins = nullptr;
+  std::atomic<int>* p2Wins = nullptr;
+  std::atomic<int>* draws = nullptr;
+  std::atomic<bool>* abortRequested = nullptr;
 };
 
 /**
@@ -165,23 +165,26 @@ constexpr void record_outcome(const GameOutcome& outcome, LocalWins& localWins) 
 /**
  * @brief Helper to query the player move choice.
  */
-constexpr int get_player_move(
-    const Player& player1, const Player& player2, bool isP1Turn, const boardState& state, u64& moveNodes) noexcept {
-  if (isP1Turn) {
-    return player1.select(state, moveNodes);
+inline int get_player_move(
+    const Player& player1, const Player& player2, bool isP1Turn, const boardState& state, bool& isMadMove) {
+  const Player& player = isP1Turn ? player1 : player2;
+  if (player.madness > 0) {
+    std::uniform_int_distribution<int> dist(0, 99);
+    if (dist(rng) < player.madness) {
+      isMadMove = true;
+      return kribu::player::select_random(state);
+    }
   }
-  return player2.select(state, moveNodes);
+  return player.select(state);
 }
 
 /**
  * @brief Helper to update telemetry performance statistics (visited nodes and CPU time).
  */
-constexpr void update_perf_stats(GamePerf& perf, bool isP1Turn, u64 moveNodes, double elapsed) noexcept {
+constexpr void update_perf_stats(GamePerf& perf, bool isP1Turn, f64 elapsed) noexcept {
   if (isP1Turn) {
-    perf.p1.nodes += moveNodes;
     perf.p1.cpuTimeSeconds += elapsed;
   } else {
-    perf.p2.nodes += moveNodes;
     perf.p2.cpuTimeSeconds += elapsed;
   }
 }
@@ -207,20 +210,20 @@ inline int execute_move(boardState& state,
                         const Player& player1,
                         const Player& player2,
                         GamePerf& perf,
-                        bool forceRandom = false) {
+                        bool forceRandom,
+                        bool& isMadMove) {
   int moveId = -1;
-  u64 moveNodes = 0;
 
   auto startTime = std::chrono::high_resolution_clock::now();
   if (forceRandom) {
-    moveId = kribu::player::select_random(state, moveNodes);
+    moveId = kribu::player::select_random(state);
   } else {
-    moveId = get_player_move(player1, player2, isP1Turn, state, moveNodes);
+    moveId = get_player_move(player1, player2, isP1Turn, state, isMadMove);
   }
   auto endTime = std::chrono::high_resolution_clock::now();
-  double elapsed = std::chrono::duration<double>(endTime - startTime).count();
+  f64 elapsed = std::chrono::duration<f64>(endTime - startTime).count();
 
-  update_perf_stats(perf, isP1Turn, moveNodes, elapsed);
+  update_perf_stats(perf, isP1Turn, elapsed);
 
   if (moveId == -1 || !is_valid(state, moveId)) {
     return -1;
@@ -384,7 +387,8 @@ inline bool play_single_turn(boardState& state,
     forcedRandomTurnsCount++;
   }
 
-  const i32 moveId = execute_move(state, isP1Turn, player1, player2, perf, forceRandom);
+  bool isMadMove = false;
+  const i32 moveId = execute_move(state, isP1Turn, player1, player2, perf, forceRandom, isMadMove);
   if (moveId == -1) {
     outcome = handle_invalid_move(isP1Turn);
     set_win_margin(outcome, state, isP1Turn);
@@ -394,6 +398,8 @@ inline bool play_single_turn(boardState& state,
   record.chosenMove = moveId;
   if (forceRandom) {
     record.playerPlayed = "ForcedRandom";
+  } else if (isMadMove) {
+    record.playerPlayed = "MadPlayer";
   } else {
     record.playerPlayed = isP1Turn ? player1.name : player2.name;
   }
@@ -426,7 +432,7 @@ inline GameOutcome play_single_game(const Player& player1,
   currentGameHistory.clear();
 
   history.clear();
-  history.reserve(static_cast<std::size_t>(maxTurns));
+  history.reserve(static_cast<usize>(maxTurns));
 
   while (turnCount < maxTurns) {
     GameOutcome outcome;
@@ -461,13 +467,14 @@ inline MatchStats run_matchup_multithreaded(const Player& player1,
     LocalWins localP1;
     LocalWins localP2;
     int localDraws = 0;
-    u64 localP1Nodes = 0;
-    u64 localP2Nodes = 0;
-    double localP1Time = 0.0;
-    double localP2Time = 0.0;
+    f64 localP1Time = 0.0;
+    f64 localP2Time = 0.0;
     u64 localTotalTurns = 0;
 
     while (true) {
+      if (config.abortRequested && config.abortRequested->load(std::memory_order_relaxed)) {
+        break;
+      }
       int gameIdx = nextGameIdx.fetch_add(1, std::memory_order_relaxed);
       if (gameIdx >= config.totalGames) {
         break;
@@ -484,14 +491,21 @@ inline MatchStats run_matchup_multithreaded(const Player& player1,
 
       if (outcome.result == GameResult::P1_WINS) {
         record_outcome(outcome, localP1);
+        if (config.p1Wins) {
+          config.p1Wins->fetch_add(1, std::memory_order_relaxed);
+        }
       } else if (outcome.result == GameResult::P2_WINS) {
         record_outcome(outcome, localP2);
+        if (config.p2Wins) {
+          config.p2Wins->fetch_add(1, std::memory_order_relaxed);
+        }
       } else {
         localDraws++;
+        if (config.draws) {
+          config.draws->fetch_add(1, std::memory_order_relaxed);
+        }
       }
 
-      localP1Nodes += perf.p1.nodes;
-      localP2Nodes += perf.p2.nodes;
       localP1Time += perf.p1.cpuTimeSeconds;
       localP2Time += perf.p2.cpuTimeSeconds;
       localTotalTurns += gameHistory.size();
@@ -511,15 +525,13 @@ inline MatchStats run_matchup_multithreaded(const Player& player1,
     stats.p2EliminationWins += localP2.elimination;
     stats.p2StalemateWins += localP2.stalemate;
     stats.p2InvalidMoveWins += localP2.invalidMove;
-    stats.p1TotalNodes += localP1Nodes;
-    stats.p2TotalNodes += localP2Nodes;
     stats.p1TotalCpuTimeSeconds += localP1Time;
     stats.p2TotalCpuTimeSeconds += localP2Time;
     stats.totalTurns += localTotalTurns;
   };
 
   std::vector<std::jthread> threads;
-  threads.reserve(static_cast<std::size_t>(config.threadCount));
+  threads.reserve(static_cast<usize>(config.threadCount));
   for (int i = 0; i < config.threadCount; ++i) {
     threads.emplace_back(worker);
   }

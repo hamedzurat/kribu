@@ -6,7 +6,6 @@
 #pragma once
 
 #include <algorithm>
-#include <cstddef>
 #include <utility>
 #include <vector>
 
@@ -46,7 +45,7 @@ class TranspositionTable {
    * @brief Constructs the transposition table with a fixed capacity.
    * @param size Size of the table (number of elements).
    */
-  explicit TranspositionTable(std::size_t size = 1048576) : table(size) {}
+  explicit TranspositionTable(usize size = 1048576) : table(size) {}
 
   /**
    * @brief Clears the transposition table.
@@ -58,7 +57,7 @@ class TranspositionTable {
    * @return True if a valid cutoff or exact score is found, false otherwise.
    */
   [[nodiscard]] bool probe(u64 hash, int depth, i32 alpha, i32 beta, i32& score, int& moveId) const noexcept {
-    std::size_t idx = hash % table.size();
+    usize idx = hash % table.size();
     const auto& entry = table[idx];
     if (entry.hash == hash && std::cmp_greater_equal(entry.depth, depth)) {
       if (entry.flag == TTFlag::EXACT) {
@@ -84,7 +83,7 @@ class TranspositionTable {
    * @brief Stores a search result in the transposition table.
    */
   void store(u64 hash, int depth, i32 score, int moveId, TTFlag flag) noexcept {
-    std::size_t idx = hash % table.size();
+    usize idx = hash % table.size();
     auto& entry = table[idx];
     // Depth-preferred replacement scheme
     if (entry.hash != hash || std::cmp_greater_equal(depth, entry.depth)) {
