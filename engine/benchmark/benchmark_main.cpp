@@ -1,32 +1,27 @@
 /**
  * @file benchmark_main.cpp
- * @brief Tournament runner for Sholo Guti engine benchmarking with Apache Arrow/Parquet.
+ * @brief Tournament runner for Sholo Guti engine benchmarking with duckdb.
  */
-
-#include <arrow/api.h>
-#include <arrow/io/file.h>
-#include <arrow/util/key_value_metadata.h>
-#include <parquet/arrow/writer.h>
-#include <parquet/exception.h>
-#include <parquet/properties.h>
-#include <sys/sysinfo.h>
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
+#include <cstdint>
+#include <duckdb.hpp>  // NOLINT(misc-include-cleaner)
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/screen_interactive.hpp>
-#include <ftxui/dom/canvas.hpp>
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/color.hpp>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <queue>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -51,7 +46,6 @@ namespace kribu::benchmark {
 
 namespace {
 
-std::mutex metadataMutex;
 std::atomic<int> globalGameId{1};
 
 /**
@@ -110,228 +104,27 @@ double calculate_cpu_usage(const CpuTimes& prev, const CpuTimes& curr) {
 }
 
 /**
- * @brief Computes the system RAM usage fraction.
+ * @brief Computes the system RAM usage fraction using /proc/meminfo.
  * @return RAM usage fraction (0.0 to 1.0).
  */
 double get_ram_usage_fraction() {
-  struct sysinfo info{};      // NOLINT(misc-include-cleaner)
-  if (sysinfo(&info) == 0) {  // NOLINT(misc-include-cleaner)
-    double total = static_cast<double>(info.totalram) * info.mem_unit;
-    double freeMem = static_cast<double>(info.freeram) * info.mem_unit;
-    double buffered = static_cast<double>(info.bufferram) * info.mem_unit;
-    double used = total - freeMem - buffered;
-    return used / total;
+  std::ifstream file("/proc/meminfo");
+  std::string line;
+  double memTotal = 0.0;
+  double memAvailable = 0.0;
+  while (std::getline(file, line)) {
+    if (line.starts_with("MemTotal:")) {
+      std::istringstream ssMemTotal(line.substr(9));
+      ssMemTotal >> memTotal;
+    } else if (line.starts_with("MemAvailable:")) {
+      std::istringstream ssMemAvailable(line.substr(13));
+      ssMemAvailable >> memAvailable;
+    }
+  }
+  if (memTotal > 0.0) {
+    return (memTotal - memAvailable) / memTotal;
   }
   return 0.0;
-}
-
-/**
- * @brief Renders a high-resolution line graph of telemetry history using ftxui::Canvas.
- * @param history Usage history data (fractions 0.0 to 1.0).
- * @param width Canvas width in characters.
- * @param height Canvas height in characters.
- * @param color Color of the graph line.
- * @return FTXUI Element containing the graph.
- */
-ftxui::Element draw_graph(const std::vector<double>& history,
-                          int width,
-                          int height,
-                          ftxui::Color color) {  // NOLINT(misc-include-cleaner)
-  using namespace ftxui;
-  Canvas graphCanvas(width, height);
-
-  int ptWidth = width * 2;
-  int ptHeight = height * 4;
-
-  // Draw background grid lines (subtle dashed horizontal lines)
-  for (int yCoord = ptHeight / 4; yCoord < ptHeight; yCoord += ptHeight / 4) {
-    for (int xCoord = 0; xCoord < ptWidth; xCoord += 4) {
-      graphCanvas.DrawPoint(xCoord, yCoord, true, Color::GrayDark);
-    }
-  }
-
-  // Draw the history plot line
-  for (size_t i = 1; i < history.size(); ++i) {  // NOLINT(misc-include-cleaner)
-    int xPos1 = static_cast<int>(static_cast<double>(i - 1) * static_cast<double>(ptWidth)
-                                 / static_cast<double>(history.size()));
-    int yPos1 = ptHeight - 1 - static_cast<int>(history[i - 1] * (ptHeight - 1));
-    int xPos2 =
-        static_cast<int>(static_cast<double>(i) * static_cast<double>(ptWidth) / static_cast<double>(history.size()));
-    int yPos2 = ptHeight - 1 - static_cast<int>(history[i] * (ptHeight - 1));
-
-    xPos1 = std::max(0, std::min(xPos1, ptWidth - 1));
-    yPos1 = std::max(0, std::min(yPos1, ptHeight - 1));
-    xPos2 = std::max(0, std::min(xPos2, ptWidth - 1));
-    yPos2 = std::max(0, std::min(yPos2, ptHeight - 1));
-
-    graphCanvas.DrawPointLine(xPos1, yPos1, xPos2, yPos2, color);
-  }
-
-  return canvas(std::move(graphCanvas));
-}
-
-/**
- * @brief Reads the highest game ID from the CSV manifest, if it exists.
- */
-int find_max_id_from_csv(const std::string& filepath) {
-  std::ifstream infile(filepath);
-  if (!infile.is_open()) {
-    return 0;
-  }
-  std::string line;
-  int maxId = 0;
-  // skip header
-  std::getline(infile, line);
-  while (std::getline(infile, line)) {
-    if (line.empty()) {
-      continue;
-    }
-    auto pos = line.find(',');
-    if (pos != std::string::npos) {
-      try {
-        int parsedId = std::stoi(line.substr(0, pos));
-        maxId = std::max(parsedId, maxId);
-      } catch (const std::exception& e) {
-        std::cerr << "Warning: failed to parse manifest CSV id: " << e.what() << "\n";
-      }
-    }
-  }
-  return maxId;
-}
-
-/**
- * @brief Holds fully-finished Arrow arrays for a single game.
- */
-struct GameArrays {
-  std::shared_ptr<arrow::Array> me;
-  std::shared_ptr<arrow::Array> opp;
-  std::shared_ptr<arrow::Array> activeCaptureIdx;
-  std::shared_ptr<arrow::Array> isP1Turn;
-  std::shared_ptr<arrow::Array> chosenMove;
-  std::shared_ptr<arrow::Array> possibleMoves;
-  std::shared_ptr<arrow::Array> playerPlayed;
-};
-
-/**
- * @brief Appends all turn records into Arrow builders and finishes them.
- * @param history The game turn history.
- * @return Finished Arrow arrays for each column.
- */
-GameArrays build_turn_arrays(  // NOLINT(readability-function-cognitive-complexity)
-    const std::vector<TurnRecord>& history) {
-  arrow::Int64Builder meBuilder;
-  arrow::Int64Builder oppBuilder;
-  arrow::Int8Builder activeCaptureIdxBuilder;
-  arrow::BooleanBuilder isP1TurnBuilder;
-  arrow::Int16Builder chosenMoveBuilder;
-  auto valueBuilder = std::make_shared<arrow::Int16Builder>();
-  arrow::ListBuilder possibleMovesBuilder(arrow::default_memory_pool(), valueBuilder);
-  arrow::StringBuilder playerPlayedBuilder;
-
-  for (const auto& turn : history) {
-    PARQUET_THROW_NOT_OK(meBuilder.Append(static_cast<i64>(turn.state.me)));
-    PARQUET_THROW_NOT_OK(oppBuilder.Append(static_cast<i64>(turn.state.opp)));
-    PARQUET_THROW_NOT_OK(activeCaptureIdxBuilder.Append(static_cast<i8>(turn.state.activeCaptureIdx)));
-    PARQUET_THROW_NOT_OK(isP1TurnBuilder.Append(turn.isP1Turn));
-    PARQUET_THROW_NOT_OK(chosenMoveBuilder.Append(static_cast<i16>(turn.chosenMove)));
-    PARQUET_THROW_NOT_OK(possibleMovesBuilder.Append());
-    for (int i = 0; i < turn.possibleMoves.size(); ++i) {
-      PARQUET_THROW_NOT_OK(valueBuilder->Append(static_cast<i16>(turn.possibleMoves.moves[i])));
-    }
-    PARQUET_THROW_NOT_OK(playerPlayedBuilder.Append(std::string(turn.playerPlayed)));
-  }
-
-  GameArrays arrays;
-  PARQUET_THROW_NOT_OK(meBuilder.Finish(&arrays.me));
-  PARQUET_THROW_NOT_OK(oppBuilder.Finish(&arrays.opp));
-  PARQUET_THROW_NOT_OK(activeCaptureIdxBuilder.Finish(&arrays.activeCaptureIdx));
-  PARQUET_THROW_NOT_OK(isP1TurnBuilder.Finish(&arrays.isP1Turn));
-  PARQUET_THROW_NOT_OK(chosenMoveBuilder.Finish(&arrays.chosenMove));
-  PARQUET_THROW_NOT_OK(possibleMovesBuilder.Finish(&arrays.possibleMoves));
-  PARQUET_THROW_NOT_OK(playerPlayedBuilder.Finish(&arrays.playerPlayed));
-  return arrays;
-}
-
-/**
- * @brief Bundles game-level metadata to avoid adjacent swappable parameters.
- */
-struct GameTableParams {
-  std::string_view player1Name;  ///< Name of Player 1.
-  std::string_view player2Name;  ///< Name of Player 2.
-  int gameId = 0;                ///< Global game ID.
-  std::string winner;            ///< Name of the winner.
-  std::string loser;             ///< Name of the loser.
-  std::string outcomeStr;        ///< Outcome string (P1_WINS / P2_WINS / DRAW).
-  std::string reasonStr;         ///< Reason string (ELIMINATION / STALEMATE / etc.).
-  int totalTurns = 0;            ///< Total number of turns in the game.
-  int winMargin = 0;             ///< Victory margin (pieces remaining difference).
-  int forcedRandomTurns = 0;     ///< Number of forced random turns.
-};
-
-/**
- * @brief Assembles an Arrow Table from finished arrays and game-level schema metadata.
- * @param arrays Finished column arrays.
- * @param params Game-level metadata for schema annotation.
- * @return Constructed Arrow Table with schema metadata.
- */
-std::shared_ptr<arrow::Table> build_game_table(const GameArrays& arrays, const GameTableParams& params) {
-  auto metadata = std::make_shared<arrow::KeyValueMetadata>();
-  metadata->Append("id", std::to_string(params.gameId));
-  metadata->Append("p1Name", std::string(params.player1Name));
-  metadata->Append("p2Name", std::string(params.player2Name));
-  metadata->Append("winner", params.winner);
-  metadata->Append("loser", params.loser);
-  metadata->Append("outcome", params.outcomeStr);
-  metadata->Append("reason", params.reasonStr);
-  metadata->Append("totalTurns", std::to_string(params.totalTurns));
-  metadata->Append("winMargin", std::to_string(params.winMargin));
-  metadata->Append("forcedRandomTurns", std::to_string(params.forcedRandomTurns));
-
-  auto schema = arrow::schema({arrow::field("me", arrow::int64()),
-                               arrow::field("opp", arrow::int64()),
-                               arrow::field("activeCaptureIdx", arrow::int8()),
-                               arrow::field("isP1Turn", arrow::boolean()),
-                               arrow::field("chosenMove", arrow::int16()),
-                               arrow::field("possibleMoves", arrow::list(arrow::int16())),
-                               arrow::field("playerPlayed", arrow::utf8())},
-                              metadata);
-
-  return arrow::Table::Make(schema,
-                            {arrays.me,
-                             arrays.opp,
-                             arrays.activeCaptureIdx,
-                             arrays.isP1Turn,
-                             arrays.chosenMove,
-                             arrays.possibleMoves,
-                             arrays.playerPlayed});
-}
-
-/**
- * @brief Writes an Arrow Table to a Parquet file, preserving Arrow schema metadata in the footer.
- * @param table The Arrow Table to write.
- * @param filename The output file path.
- */
-void write_parquet_file(const arrow::Table& table, const std::string& filename) {
-  std::shared_ptr<arrow::io::FileOutputStream> outfile;
-  PARQUET_ASSIGN_OR_THROW(outfile, arrow::io::FileOutputStream::Open(filename));
-  auto arrowProps = parquet::ArrowWriterProperties::Builder().store_schema()->build();
-  PARQUET_THROW_NOT_OK(parquet::arrow::WriteTable(
-      table, arrow::default_memory_pool(), outfile, 1024LL * 1024LL, parquet::default_writer_properties(), arrowProps));
-}
-
-/**
- * @brief Converts a GameResult to its string representation.
- * @param result The game result enum value.
- * @return String representation ("P1_WINS", "P2_WINS", or "DRAW").
- */
-std::string outcome_to_string(GameResult result) {
-  if (result == GameResult::P1_WINS) {
-    return "P1_WINS";
-  }
-  if (result == GameResult::P2_WINS) {
-    return "P2_WINS";
-  }
-  return "DRAW";
 }
 
 /**
@@ -355,13 +148,264 @@ std::string reason_to_string(WinReason reason) {
   return "DRAW_MAX_TURNS";
 }
 
-/**
- * @brief Prints the tournament matchup progress bar.
- * @param completed Number of completed games.
- * @param total Total number of games in the matchup.
- * @param p1Name Name of Player 1.
- * @param p2Name Name of Player 2.
- */
+struct CompletedGame {
+  std::string p1Name;
+  std::string p2Name;
+  int gameId;
+  GameOutcome outcome;
+  std::vector<TurnRecord> history;
+};
+
+class GameWriterQueue {
+ private:
+  std::queue<CompletedGame> queue_;
+  std::mutex mutex_;
+  std::condition_variable cv_;
+  bool done_ = false;
+
+ public:
+  void push(CompletedGame&& game) {
+    {
+      std::scoped_lock lock(mutex_);
+      queue_.push(std::move(game));
+    }
+    cv_.notify_one();
+  }
+
+  bool pop(CompletedGame& game) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    cv_.wait(lock, [this] { return !queue_.empty() || done_; });
+    if (queue_.empty()) {
+      return false;
+    }
+    game = std::move(queue_.front());
+    queue_.pop();
+    return true;
+  }
+
+  void set_done() {
+    {
+      std::scoped_lock lock(mutex_);
+      done_ = true;
+    }
+    cv_.notify_all();
+  }
+};
+
+namespace {
+GameWriterQueue gameQueue;
+}
+
+std::string get_player_type(std::string_view name) {
+  std::string nameStr(name);
+  if (nameStr.find("Random") != std::string::npos) {
+    return "random";
+  }
+  if (nameStr.find("Greedy") != std::string::npos) {
+    return "greedy";
+  }
+  if (nameStr.find("Minimax") != std::string::npos) {
+    return "minimax";
+  }
+  if (nameStr.find("MCTS") != std::string::npos) {
+    return "mcts";
+  }
+  if (nameStr == "ForcedRandom") {
+    return "forced_random";
+  }
+  if (nameStr == "MadPlayer") {
+    return "mad_player";
+  }
+  return "unknown";
+}
+
+int get_player_depth(std::string_view name) {
+  std::string nameStr(name);
+  if (nameStr.find("D8") != std::string::npos) {
+    return 8;
+  }
+  if (nameStr.find("800") != std::string::npos) {
+    return 800;
+  }
+  if (nameStr.find("1000") != std::string::npos) {
+    return 1000;
+  }
+  return 0;
+}
+
+void initialize_duckdb(duckdb::Connection& con) {  // NOLINT(misc-include-cleaner)
+  con.Query(
+      "CREATE TABLE IF NOT EXISTS players ("
+      "name        VARCHAR PRIMARY KEY,"
+      "player_type VARCHAR,"
+      "depth       INTEGER,"
+      "madness     INTEGER"
+      ")");
+
+  con.Query(
+      "CREATE TABLE IF NOT EXISTS games ("
+      "game_id             INTEGER PRIMARY KEY,"
+      "p1_name             VARCHAR,"
+      "p2_name             VARCHAR,"
+      "outcome             TINYINT,"
+      "reason              VARCHAR,"
+      "total_turns         INTEGER,"
+      "win_margin          INTEGER,"
+      "forced_random_turns INTEGER,"
+      "mad_turns           INTEGER"
+      ")");
+
+  con.Query(
+      "CREATE TABLE IF NOT EXISTS turns ("
+      "game_id             INTEGER,"
+      "turn_idx            INTEGER,"
+      "me                  BIGINT,"
+      "opp                 BIGINT,"
+      "active_capture_idx  TINYINT,"
+      "is_p1_turn          BOOLEAN,"
+      "chosen_move         SMALLINT,"
+      "player_played       VARCHAR,"
+      "PRIMARY KEY (game_id, turn_idx),"
+      "FOREIGN KEY (player_played) REFERENCES players(name)"
+      ")");
+
+  con.Query("DROP VIEW IF EXISTS policy_data");
+  con.Query(
+      "CREATE VIEW policy_data AS "
+      "SELECT "
+      "  t.me, "
+      "  t.opp, "
+      "  t.active_capture_idx, "
+      "  t.chosen_move "
+      "FROM turns t "
+      "JOIN players p ON t.player_played = p.name "
+      "WHERE "
+      "  t.player_played NOT IN ('ForcedRandom', 'MadPlayer') "
+      "  AND p.player_type IN ('minimax', 'mcts') "
+      "  AND p.madness = 0");
+
+  con.Query("DROP VIEW IF EXISTS value_data");
+  con.Query(
+      "CREATE VIEW value_data AS "
+      "SELECT "
+      "  t.me, "
+      "  t.opp, "
+      "  t.active_capture_idx, "
+      "  CASE "
+      "    WHEN g.outcome = 2                      THEN 0.5 "
+      "    WHEN t.is_p1_turn AND g.outcome = 0     THEN 1.0 "
+      "    WHEN NOT t.is_p1_turn AND g.outcome = 1 THEN 1.0 "
+      "    ELSE 0.0 "
+      "  END AS value_label "
+      "FROM turns t "
+      "JOIN games g ON t.game_id = g.game_id");
+}
+
+bool game_exists(duckdb::Connection& con, int gameId) {
+  auto res = con.Query("SELECT 1 FROM games WHERE game_id = " + std::to_string(gameId));
+  return res->RowCount() > 0;
+}
+
+void insert_players(duckdb::Connection& con, const std::map<std::string, Player>& players) {
+  con.Query(
+      "INSERT INTO players (name, player_type, depth, madness) VALUES ('ForcedRandom', 'forced_random', 0, 0) ON "
+      "CONFLICT (name) DO NOTHING");
+  con.Query(
+      "INSERT INTO players (name, player_type, depth, madness) VALUES ('MadPlayer', 'mad_player', 0, 0) ON CONFLICT "
+      "(name) DO NOTHING");
+
+  for (const auto& [name, player] : players) {
+    std::string type = get_player_type(name);
+    int depth = get_player_depth(name);
+    auto prep = con.Prepare(
+        "INSERT INTO players (name, player_type, depth, madness) VALUES (?, ?, ?, ?) ON CONFLICT (name) DO NOTHING");
+    prep->Execute(name, type, depth, player.madness);
+  }
+}
+
+void db_writer_thread_func() {
+  duckdb::DuckDB duckDb("benchmark/dataset.duckdb");  // NOLINT(misc-include-cleaner)
+  duckdb::Connection con(duckDb);                     // NOLINT(misc-include-cleaner)
+  initialize_duckdb(con);
+
+  CompletedGame game;
+  while (gameQueue.pop(game)) {
+    if (game_exists(con, game.gameId)) {
+      continue;
+    }
+
+    int outcomeInt = 2;
+    if (game.outcome.result == GameResult::P1_WINS) {
+      outcomeInt = 0;
+    } else if (game.outcome.result == GameResult::P2_WINS) {
+      outcomeInt = 1;
+    }
+
+    std::string reasonStr = reason_to_string(game.outcome.reason);
+
+    int madTurnsCount = 0;
+    int forcedRandomTurnsCount = 0;
+    for (const auto& rec : game.history) {
+      if (rec.playerPlayed == "MadPlayer") {
+        madTurnsCount++;
+      } else if (rec.playerPlayed == "ForcedRandom") {
+        forcedRandomTurnsCount++;
+      }
+    }
+
+    {
+      auto prep = con.Prepare(
+          "INSERT INTO games (game_id, p1_name, p2_name, outcome, reason, total_turns, win_margin, "
+          "forced_random_turns, mad_turns) "
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+          "ON CONFLICT (game_id) DO NOTHING");
+      prep->Execute(game.gameId,
+                    game.p1Name,
+                    game.p2Name,
+                    outcomeInt,
+                    reasonStr,
+                    static_cast<int>(game.history.size()),
+                    game.outcome.winMargin,
+                    forcedRandomTurnsCount,
+                    madTurnsCount);
+    }
+
+    try {
+      duckdb::Appender appender(con, "turns");  // NOLINT(misc-include-cleaner)
+      for (size_t i = 0; i < game.history.size(); ++i) {
+        const auto& turn = game.history[i];
+        appender.BeginRow();
+        appender.Append<int32_t>(game.gameId);
+        appender.Append<int32_t>(static_cast<int32_t>(i));
+        appender.Append<int64_t>(static_cast<int64_t>(turn.state.me));
+        appender.Append<int64_t>(static_cast<int64_t>(turn.state.opp));
+        appender.Append<int8_t>(static_cast<int8_t>(turn.state.activeCaptureIdx));
+        appender.Append<bool>(turn.isP1Turn);
+        appender.Append<int16_t>(static_cast<int16_t>(turn.chosenMove));
+        appender.Append(std::string(turn.playerPlayed).c_str());
+        appender.EndRow();
+      }
+      appender.Close();
+    } catch (const std::exception& e) {
+      std::cerr << "Error writing turns for game " << game.gameId << ": " << e.what() << "\n";
+    }
+  }
+}
+
+int get_max_game_id() {
+  try {
+    duckdb::DuckDB duckDb("benchmark/dataset.duckdb");  // NOLINT(misc-include-cleaner)
+    duckdb::Connection con(duckDb);                     // NOLINT(misc-include-cleaner)
+    initialize_duckdb(con);
+    auto res = con.Query("SELECT COALESCE(MAX(game_id), 0) FROM games");
+    if (res->RowCount() > 0) {
+      return res->GetValue(0, 0).GetValue<int32_t>();
+    }
+  } catch (...) {  // NOLINT(bugprone-empty-catch)
+  }
+  return 0;
+}
+
 /**
  * @struct MatchupState
  * @brief Thread-safe progress and telemetry statistics for a single tournament matchup.
@@ -483,61 +527,17 @@ ftxui::Element render_active_panel(const MatchupState& match) {
 
 }  // namespace
 
-/**
- * @brief Saves a completed game dataset directly to a Parquet file, storing metadata in the schema footer.
- * @param player1Name Name of Player 1.
- * @param player2Name Name of Player 2.
- * @param gameId The unique game index in the tournament matchup.
- * @param outcome The result and win reason of the game.
- * @param history The sequence of moves played during the game.
- */
-void save_game_parquet(std::string_view player1Name,  // NOLINT(misc-use-internal-linkage)
-                       std::string_view player2Name,
-                       int gameId,
-                       const GameOutcome& outcome,
-                       const std::vector<TurnRecord>& history) {
-  std::string winner = "DRAW";
-  std::string loser = "DRAW";
-  std::string outcomeStr = outcome_to_string(outcome.result);
-
-  if (outcomeStr == "P1_WINS") {
-    winner = player1Name;
-    loser = player2Name;
-  } else if (outcomeStr == "P2_WINS") {
-    winner = player2Name;
-    loser = player1Name;
-  }
-
-  GameTableParams params{.player1Name = player1Name,
-                         .player2Name = player2Name,
-                         .gameId = gameId,
-                         .winner = winner,
-                         .loser = loser,
-                         .outcomeStr = outcomeStr,
-                         .reasonStr = reason_to_string(outcome.reason),
-                         .totalTurns = static_cast<int>(history.size()),
-                         .winMargin = outcome.winMargin,
-                         .forcedRandomTurns = outcome.forcedRandomTurns};
-
-  const GameArrays arrays = build_turn_arrays(history);
-  const auto table = build_game_table(arrays, params);
-
-  const std::string filename = "benchmark/" + std::to_string(gameId) + ".parquet";
-  write_parquet_file(*table, filename);
-
-  {
-    std::scoped_lock lock(metadataMutex);
-    std::string csvPath = "benchmark/manifest.csv";
-    bool fileExists = std::filesystem::exists(csvPath);
-    std::ofstream outfile(csvPath, std::ios::app);
-    if (outfile.is_open()) {
-      if (!fileExists) {
-        outfile << "id,winner,loser,outcome,reason,totalTurns,winMargin,forcedRandomTurns\n";
-      }
-      outfile << gameId << "," << winner << "," << loser << "," << params.outcomeStr << "," << params.reasonStr << ","
-              << params.totalTurns << "," << params.winMargin << "," << params.forcedRandomTurns << "\n";
-    }
-  }
+void save_game(std::string_view player1Name,
+               std::string_view player2Name,
+               int gameId,
+               const GameOutcome& outcome,
+               const std::vector<TurnRecord>& history) {
+  CompletedGame game{.p1Name = std::string(player1Name),
+                     .p2Name = std::string(player2Name),
+                     .gameId = gameId,
+                     .outcome = outcome,
+                     .history = history};
+  gameQueue.push(std::move(game));
 }
 
 }  // namespace kribu::benchmark
@@ -552,7 +552,7 @@ int main() {  // NOLINT(readability-function-cognitive-complexity)
   try {
     std::filesystem::create_directories("benchmark");
 
-    int lastId = kribu::benchmark::find_max_id_from_csv("benchmark/manifest.csv");
+    int lastId = kribu::benchmark::get_max_game_id();
     globalGameId.store(lastId + 1, std::memory_order_relaxed);
 
     const auto playerList = kribu::player::BENCHMARK_PLAYERS;
@@ -560,6 +560,67 @@ int main() {  // NOLINT(readability-function-cognitive-complexity)
     for (const auto& playerEntry : playerList) {
       players[std::string(playerEntry.name)] = playerEntry;
     }
+
+    struct DbStats {
+      int count = 0;
+      int p1Wins = 0;
+      int p2Wins = 0;
+      int draws = 0;
+      int p1Elim = 0;
+      int p1Stalemate = 0;
+      int p1Invalid = 0;
+      int p2Elim = 0;
+      int p2Stalemate = 0;
+      int p2Invalid = 0;
+      u64 totalTurns = 0;
+    };
+    std::map<std::pair<std::string, std::string>, DbStats> existingStats;
+
+    // Initialize DuckDB schema and insert players first
+    {
+      duckdb::DuckDB duckDb("benchmark/dataset.duckdb");  // NOLINT(misc-include-cleaner)
+      duckdb::Connection con(duckDb);                     // NOLINT(misc-include-cleaner)
+      kribu::benchmark::initialize_duckdb(con);
+      kribu::benchmark::insert_players(con, players);
+
+      try {
+        auto res = con.Query(
+            "SELECT p1_name, p2_name, CAST(COUNT(*) AS INTEGER), "
+            "CAST(SUM(CASE WHEN outcome = 0 THEN 1 ELSE 0 END) AS INTEGER), "
+            "CAST(SUM(CASE WHEN outcome = 1 THEN 1 ELSE 0 END) AS INTEGER), "
+            "CAST(SUM(CASE WHEN outcome = 2 THEN 1 ELSE 0 END) AS INTEGER), "
+            "CAST(SUM(CASE WHEN outcome = 0 AND reason = 'ELIMINATION' THEN 1 ELSE 0 END) AS INTEGER), "
+            "CAST(SUM(CASE WHEN outcome = 0 AND reason = 'STALEMATE' THEN 1 ELSE 0 END) AS INTEGER), "
+            "CAST(SUM(CASE WHEN outcome = 0 AND reason = 'INVALID_MOVE' THEN 1 ELSE 0 END) AS INTEGER), "
+            "CAST(SUM(CASE WHEN outcome = 1 AND reason = 'ELIMINATION' THEN 1 ELSE 0 END) AS INTEGER), "
+            "CAST(SUM(CASE WHEN outcome = 1 AND reason = 'STALEMATE' THEN 1 ELSE 0 END) AS INTEGER), "
+            "CAST(SUM(CASE WHEN outcome = 1 AND reason = 'INVALID_MOVE' THEN 1 ELSE 0 END) AS INTEGER), "
+            "CAST(SUM(total_turns) AS BIGINT) "
+            "FROM games GROUP BY p1_name, p2_name");
+
+        for (size_t i = 0; i < res->RowCount(); ++i) {
+          std::string player1Name = res->GetValue(0, i).GetValue<std::string>();
+          std::string player2Name = res->GetValue(1, i).GetValue<std::string>();
+          DbStats dbStats;
+          dbStats.count = res->GetValue(2, i).GetValue<int32_t>();
+          dbStats.p1Wins = res->GetValue(3, i).GetValue<int32_t>();
+          dbStats.p2Wins = res->GetValue(4, i).GetValue<int32_t>();
+          dbStats.draws = res->GetValue(5, i).GetValue<int32_t>();
+          dbStats.p1Elim = res->GetValue(6, i).GetValue<int32_t>();
+          dbStats.p1Stalemate = res->GetValue(7, i).GetValue<int32_t>();
+          dbStats.p1Invalid = res->GetValue(8, i).GetValue<int32_t>();
+          dbStats.p2Elim = res->GetValue(9, i).GetValue<int32_t>();
+          dbStats.p2Stalemate = res->GetValue(10, i).GetValue<int32_t>();
+          dbStats.p2Invalid = res->GetValue(11, i).GetValue<int32_t>();
+          dbStats.totalTurns = res->GetValue(12, i).GetValue<int64_t>();
+          existingStats[{player1Name, player2Name}] = dbStats;
+        }
+      } catch (...) {  // NOLINT(bugprone-empty-catch)
+      }
+    }
+
+    // Start background DB writer thread
+    std::thread dbWriterThread(kribu::benchmark::db_writer_thread_func);
 
     const auto matchups = BENCHMARK_MATCHUPS;
 
@@ -576,6 +637,27 @@ int main() {  // NOLINT(readability-function-cognitive-complexity)
       if (!players.contains(state->p1Name) || !players.contains(state->p2Name)) {
         state->registered = false;
         state->completed = true;
+      } else {
+        auto existing = existingStats[{state->p1Name, state->p2Name}];
+        state->completedGames.store(existing.count);
+        state->p1Wins.store(existing.p1Wins);
+        state->p2Wins.store(existing.p2Wins);
+        state->draws.store(existing.draws);
+
+        state->stats.p1Wins = existing.p1Wins;
+        state->stats.p2Wins = existing.p2Wins;
+        state->stats.draws = existing.draws;
+        state->stats.p1EliminationWins = existing.p1Elim;
+        state->stats.p1StalemateWins = existing.p1Stalemate;
+        state->stats.p1InvalidMoveWins = existing.p1Invalid;
+        state->stats.p2EliminationWins = existing.p2Elim;
+        state->stats.p2StalemateWins = existing.p2Stalemate;
+        state->stats.p2InvalidMoveWins = existing.p2Invalid;
+        state->stats.totalTurns = existing.totalTurns;
+
+        if (existing.count >= state->games) {
+          state->completed = true;
+        }
       }
       matchupsList.push_back(std::move(state));
     }
@@ -610,31 +692,50 @@ int main() {  // NOLINT(readability-function-cognitive-complexity)
           continue;
         }
 
-        match.active = true;
-        match.startTime = std::chrono::high_resolution_clock::now();
+        int existing = match.completedGames.load();
+        int gamesToPlay = match.games > existing ? match.games - existing : 0;
 
-        const auto& playerFirst = players.at(match.p1Name);
-        const auto& playerSecond = players.at(match.p2Name);
+        if (gamesToPlay > 0) {
+          match.active = true;
+          match.startTime = std::chrono::high_resolution_clock::now();
 
-        match.stats = run_matchup_multithreaded(playerFirst,
-                                                playerSecond,
-                                                TournamentConfig{.totalGames = match.games,
-                                                                 .maxTurns = match.maxTurns,
-                                                                 .threadCount = THREAD_COUNT,
-                                                                 .completedGames = &match.completedGames,
-                                                                 .globalGameId = &globalGameId,
-                                                                 .p1Wins = &match.p1Wins,
-                                                                 .p2Wins = &match.p2Wins,
-                                                                 .draws = &match.draws,
-                                                                 .abortRequested = &abortRequested});
+          const auto& playerFirst = players.at(match.p1Name);
+          const auto& playerSecond = players.at(match.p2Name);
 
-        match.endTime = std::chrono::high_resolution_clock::now();
-        match.active = false;
-        match.completed = true;
+          auto runStats = run_matchup_multithreaded(playerFirst,
+                                                    playerSecond,
+                                                    TournamentConfig{.totalGames = gamesToPlay,
+                                                                     .maxTurns = match.maxTurns,
+                                                                     .threadCount = THREAD_COUNT,
+                                                                     .completedGames = &match.completedGames,
+                                                                     .globalGameId = &globalGameId,
+                                                                     .p1Wins = &match.p1Wins,
+                                                                     .p2Wins = &match.p2Wins,
+                                                                     .draws = &match.draws,
+                                                                     .abortRequested = &abortRequested});
 
-        f64 p1AvgCpuMs = (match.stats.p1TotalCpuTimeSeconds * 1000.0) / match.games;
-        f64 p2AvgCpuMs = (match.stats.p2TotalCpuTimeSeconds * 1000.0) / match.games;
-        f64 avgTurns = static_cast<f64>(match.stats.totalTurns) / match.games;
+          match.endTime = std::chrono::high_resolution_clock::now();
+          match.active = false;
+          match.completed = true;
+
+          match.stats.p1Wins += runStats.p1Wins;
+          match.stats.p2Wins += runStats.p2Wins;
+          match.stats.draws += runStats.draws;
+          match.stats.p1EliminationWins += runStats.p1EliminationWins;
+          match.stats.p1StalemateWins += runStats.p1StalemateWins;
+          match.stats.p1InvalidMoveWins += runStats.p1InvalidMoveWins;
+          match.stats.p2EliminationWins += runStats.p2EliminationWins;
+          match.stats.p2StalemateWins += runStats.p2StalemateWins;
+          match.stats.p2InvalidMoveWins += runStats.p2InvalidMoveWins;
+          match.stats.totalTurns += runStats.totalTurns;
+          match.stats.p1TotalCpuTimeSeconds += runStats.p1TotalCpuTimeSeconds;
+          match.stats.p2TotalCpuTimeSeconds += runStats.p2TotalCpuTimeSeconds;
+        }
+
+        int totalPlayed = std::max(1, match.completedGames.load());
+        f64 p1AvgCpuMs = (match.stats.p1TotalCpuTimeSeconds * 1000.0) / totalPlayed;
+        f64 p2AvgCpuMs = (match.stats.p2TotalCpuTimeSeconds * 1000.0) / totalPlayed;
+        f64 avgTurns = static_cast<f64>(match.stats.totalTurns) / totalPlayed;
 
         summaryTable.add_row({match.p1Name,
                               match.p2Name,
@@ -673,8 +774,6 @@ int main() {  // NOLINT(readability-function-cognitive-complexity)
       int termWidth = screen.dimx() <= 0 ? 80 : screen.dimx();
       int termHeight = screen.dimy() <= 0 ? 24 : screen.dimy();
 
-      int graphHeight = std::max(6, std::min(12, termHeight / 4));
-
       for (size_t i = 0; i < matchupsList.size(); ++i) {
         listElements.push_back(
             render_matchup_row(*matchupsList[i], static_cast<int>(i), std::cmp_equal(i, activeIndex)));
@@ -706,31 +805,27 @@ int main() {  // NOLINT(readability-function-cognitive-complexity)
                                  center(text("Press 'q' twice to stop")) | color(Color::GrayDark)}))
                     | color(Color::Green);
 
-      auto body = hbox({border(vbox({center(bold(text("Matchup Queue Window"))) | color(Color::Cyan),
-                                     separator(),
-                                     vbox(std::move(listElements)),
-                                     filler()}))
-                            | color(Color::Cyan) | flex,
-                        activePanel});
+      auto sysPanel = border(vbox({center(bold(text("SYSTEM TELEMETRY"))) | color(Color::Yellow),
+                                   separator(),
+                                   hbox({text("CPU Usage: ") | color(Color::GrayLight),
+                                         gauge(static_cast<float>(cpuHistory.back())) | color(Color::Green) | flex,
+                                         text(" " + std::to_string(static_cast<int>(cpuHistory.back() * 100.0)) + "%")
+                                             | color(Color::Green)}),
+                                   hbox({text("RAM Usage: ") | color(Color::GrayLight),
+                                         gauge(static_cast<float>(ramHistory.back())) | color(Color::Yellow) | flex,
+                                         text(" " + std::to_string(static_cast<int>(ramHistory.back() * 100.0)) + "%")
+                                             | color(Color::Yellow)})}))
+                      | color(Color::GrayDark);
 
-      int graphWidth = std::max(20, (termWidth - 8) / 2);
-      auto cpuGraph = draw_graph(cpuHistory, graphWidth, graphHeight, Color::Green);
-      auto ramGraph = draw_graph(ramHistory, graphWidth, graphHeight, Color::Yellow);
+      auto leftColumn = vbox({header, activePanel, sysPanel, footer}) | flex;
 
-      auto sysPanel =
-          border(hbox({flex(vbox({hbox({bold(text("CPU Usage: ")),
-                                        bold(text(std::to_string(static_cast<int>(cpuHistory.back() * 100.0)) + "%"))
-                                            | color(Color::Green)}),
-                                  cpuGraph})),
-                       separator(),
-                       flex(vbox({hbox({bold(text("RAM Usage: ")),
-                                        bold(text(std::to_string(static_cast<int>(ramHistory.back() * 100.0)) + "%"))
-                                            | color(Color::Yellow)}),
-                                  ramGraph}))}))
-          | color(Color::GrayDark);
+      auto rightColumn = border(vbox({center(bold(text("Matchup Queue Window"))) | color(Color::Cyan),
+                                      separator(),
+                                      vbox(std::move(listElements)),
+                                      filler()}))
+                         | color(Color::Cyan) | flex;
 
-      return vbox({header, flex(body), sysPanel, footer}) | size(WIDTH, EQUAL, termWidth)
-             | size(HEIGHT, EQUAL, termHeight);
+      return hbox({leftColumn, rightColumn}) | size(WIDTH, EQUAL, termWidth) | size(HEIGHT, EQUAL, termHeight);
     });
 
     int qPressCount = 0;
@@ -778,6 +873,12 @@ int main() {  // NOLINT(readability-function-cognitive-complexity)
     }
     if (refreshThread.joinable()) {
       refreshThread.join();
+    }
+
+    // Stop and join the DuckDB writer thread
+    kribu::benchmark::gameQueue.set_done();
+    if (dbWriterThread.joinable()) {
+      dbWriterThread.join();
     }
 
     // Format summaryTable for premium terminal DX

@@ -51,16 +51,49 @@ struct MatchConfig {
 namespace kribu::benchmark {
 
 /**
- * @brief Returns the matchup pairs (by name) to simulate.
+ * @brief Number of worker threads for parallel game execution.
  */
 inline constexpr int THREAD_COUNT = 32;
 
 /**
  * @brief Compile-time defined array of benchmark matchups.
+ *
+ * @details Two categories:
+ *
+ *  POLICY matchups (1000 games, maxTurns=1024)
+ *    Strong-player moves are the training signal for the policy network.
+ *    Filter by playerPlayed (exclude "ForcedRandom" / "MadPlayer") in post-processing.
+ *
+ *  VALUE matchups (200 games, maxTurns=512)
+ *    Diverse skill gaps and outcome distributions for value-network training.
+ *    All turns from all games are used; label is derived from the game outcome.
  */
 inline constexpr std::array BENCHMARK_MATCHUPS = {
     // clang-format off
-    MatchConfig{.player1Name = "RandomPlayer", .player2Name = "RandomPlayer", .games = 32, .maxTurns = 2048},
+
+    // ── POLICY matchups (1000 games × maxTurns=1024) ─────────────────────────
+    //    Only strong player moves are kept for policy training.
+    MatchConfig{.player1Name = "MinimaxD8",         .player2Name = "MinimaxD8",           .games = 2, .maxTurns = 1024},
+    MatchConfig{.player1Name = "MinimaxD8",         .player2Name = "MCTS_EpsGreedy1000",  .games = 2, .maxTurns = 1024},
+    MatchConfig{.player1Name = "MinimaxD8",         .player2Name = "MCTS_EpsGreedy800",   .games = 2, .maxTurns = 1024},
+    MatchConfig{.player1Name = "MinimaxD8",         .player2Name = "MCTS_Heuristic800",   .games = 2, .maxTurns = 1024},
+    MatchConfig{.player1Name = "MinimaxD8",         .player2Name = "MinimaxD8_Mad2",      .games = 2, .maxTurns = 1024},
+
+    // ── VALUE matchups (200 games × maxTurns=512) ────────────────────────────
+    //    Diverse skill gaps produce diverse outcome labels for value training.
+    MatchConfig{.player1Name = "MinimaxD8",         .player2Name = "RandomPlayer",        .games = 2,  .maxTurns = 512},
+    MatchConfig{.player1Name = "MinimaxD8",         .player2Name = "GreedyPlayer",        .games = 2,  .maxTurns = 512},
+    MatchConfig{.player1Name = "MinimaxD8",         .player2Name = "MinimaxD8_Mad5",      .games = 2,  .maxTurns = 512},
+    MatchConfig{.player1Name = "MinimaxD8",         .player2Name = "MinimaxD8_Mad10",     .games = 2,  .maxTurns = 512},
+    MatchConfig{.player1Name = "MCTS_EpsGreedy800", .player2Name = "RandomPlayer",        .games = 2,  .maxTurns = 512},
+    MatchConfig{.player1Name = "MCTS_EpsGreedy800", .player2Name = "GreedyPlayer",        .games = 2,  .maxTurns = 512},
+    MatchConfig{.player1Name = "MCTS_Random800",    .player2Name = "RandomPlayer",        .games = 2,  .maxTurns = 512},
+    MatchConfig{.player1Name = "GreedyPlayer",      .player2Name = "RandomPlayer",        .games = 2,  .maxTurns = 512},
+    MatchConfig{.player1Name = "GreedyPlayer_Mad30",.player2Name = "RandomPlayer",        .games = 2,  .maxTurns = 512},
+    MatchConfig{.player1Name = "MinimaxD8_Mad2",    .player2Name = "MinimaxD8_Mad5",      .games = 2,  .maxTurns = 512},
+    MatchConfig{.player1Name = "MinimaxD8_Mad5",    .player2Name = "GreedyPlayer",        .games = 2,  .maxTurns = 512},
+
     // clang-format on
 };
+
 }  // namespace kribu::benchmark

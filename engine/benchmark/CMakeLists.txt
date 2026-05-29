@@ -11,15 +11,8 @@ cpmaddpackage(
   "FTXUI_BUILD_DOCS OFF"
   "FTXUI_BUILD_TESTS OFF")
 
-find_package(Arrow CONFIG REQUIRED)
-find_package(Parquet CONFIG REQUIRED)
+find_library(DUCKDB_LIBRARY NAMES duckdb REQUIRED)
 add_executable(kribu_benchmark_main benchmark_main.cpp)
 target_link_libraries(
-  kribu_benchmark_main
-  PRIVATE kribu_engine
-          Arrow::arrow_shared
-          Parquet::parquet_shared
-          tabulate
-          ftxui::screen
-          ftxui::dom
-          ftxui::component)
+  kribu_benchmark_main PRIVATE kribu_engine ${DUCKDB_LIBRARY} tabulate
+                               ftxui::screen ftxui::dom ftxui::component)

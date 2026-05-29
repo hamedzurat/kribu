@@ -12,7 +12,6 @@
 #include <eve/eve.hpp>
 #include <eve/module/core.hpp>
 #include <stdexcept>
-#include <type_traits>
 
 #include "board.hpp"
 #include "types.hpp"
@@ -342,7 +341,7 @@ struct MoveList {
     next.opp &= ~(1ULL << mov.captured);
     next.hash ^= kribu::zobrist::KEYS.opp[mov.captured];
 
-    i8 nextCaptureIdx = can_continue_capturing(next, mov.to) ? mov.to : static_cast<i8>(-1);
+    i8 nextCaptureIdx = mov.to;
 
     int oldCap = (state.activeCaptureIdx == -1) ? 37 : state.activeCaptureIdx;
     int newCap = (nextCaptureIdx == -1) ? 37 : nextCaptureIdx;

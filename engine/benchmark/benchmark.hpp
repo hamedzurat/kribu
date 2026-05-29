@@ -31,7 +31,6 @@ struct TurnRecord {
   boardState state;
   bool isP1Turn = false;
   int chosenMove = -1;
-  MoveList possibleMoves;
   std::string_view playerPlayed;
 };
 
@@ -55,7 +54,6 @@ struct GameOutcome {
   GameResult result;
   WinReason reason;
   int winMargin = 0;
-  int forcedRandomTurns = 0;  ///< Number of forced random plays in this game.
 };
 
 /**
@@ -123,14 +121,14 @@ struct TournamentConfig {
 };
 
 /**
- * @brief Saves a completed game dataset directly to a Parquet file.
- * @details Implemented in benchmark_main.cpp using Apache Arrow.
+ * @brief Saves a completed game dataset to DuckDB.
+ * @details Implemented in benchmark_main.cpp.
  */
-void save_game_parquet(std::string_view player1Name,
-                       std::string_view player2Name,
-                       int gameId,
-                       const GameOutcome& outcome,
-                       const std::vector<TurnRecord>& history);
+void save_game(std::string_view player1Name,
+               std::string_view player2Name,
+               int gameId,
+               const GameOutcome& outcome,
+               const std::vector<TurnRecord>& history);
 
 /**
  * @brief Thread-local accumulator for win statistics.
@@ -360,7 +358,6 @@ inline bool play_single_turn(boardState& state,
                              const Player& player2,
                              GamePerf& perf,
                              i32& forcedRandomTurnsLeft,
-                             i32& forcedRandomTurnsCount,
                              std::vector<TurnRecord>& history,
                              GameOutcome& outcome) {
   const GameStatus status = get_game_status(state);
@@ -370,16 +367,11 @@ inline bool play_single_turn(boardState& state,
     return true;
   }
 
-  TurnRecord record{.state = state,
-                    .isP1Turn = isP1Turn,
-                    .chosenMove = -1,
-                    .possibleMoves = all_possible_moves(state),
-                    .playerPlayed = ""};
+  TurnRecord record{.state = state, .isP1Turn = isP1Turn, .chosenMove = -1, .playerPlayed = ""};
 
   const bool forceRandom = (forcedRandomTurnsLeft > 0);
   if (forcedRandomTurnsLeft > 0) {
     forcedRandomTurnsLeft--;
-    forcedRandomTurnsCount++;
   }
 
   const bool playerWasP1 = isP1Turn;
@@ -425,7 +417,6 @@ inline GameOutcome play_single_game(const Player& player1,
   i32 turnCount = 0;
   bool isP1Turn = p1StartsFirst;
   i32 forcedRandomTurnsLeft = 0;
-  i32 forcedRandomTurnsCount = 0;
 
   std::vector<u64> gameHistoryHashes;
   gameHistoryHashes.reserve(static_cast<usize>(maxTurns));
@@ -436,20 +427,16 @@ inline GameOutcome play_single_game(const Player& player1,
   while (turnCount < maxTurns) {
     GameOutcome outcome;
     if (handle_repetition(state, gameHistoryHashes, forcedRandomTurnsLeft, outcome)) {
-      outcome.forcedRandomTurns = forcedRandomTurnsCount;
       return outcome;
     }
 
-    if (play_single_turn(
-            state, isP1Turn, player1, player2, perf, forcedRandomTurnsLeft, forcedRandomTurnsCount, history, outcome)) {
-      outcome.forcedRandomTurns = forcedRandomTurnsCount;
+    if (play_single_turn(state, isP1Turn, player1, player2, perf, forcedRandomTurnsLeft, history, outcome)) {
       return outcome;
     }
     turnCount++;
   }
 
-  return GameOutcome{
-      .result = GameResult::DRAW, .reason = WinReason::DRAW_MAX_TURNS, .forcedRandomTurns = forcedRandomTurnsCount};
+  return GameOutcome{.result = GameResult::DRAW, .reason = WinReason::DRAW_MAX_TURNS};
 }
 
 /**
@@ -486,7 +473,7 @@ inline MatchStats run_matchup_multithreaded(const Player& player1,  // NOLINT(re
 
       GameOutcome outcome = play_single_game(player1, player2, p1Starts, perf, config.maxTurns, gameHistory);
 
-      save_game_parquet(player1.name, player2.name, globalId, outcome, gameHistory);
+      save_game(player1.name, player2.name, globalId, outcome, gameHistory);
 
       if (outcome.result == GameResult::P1_WINS) {
         record_outcome(outcome, localP1);

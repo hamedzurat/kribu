@@ -36,10 +36,10 @@ def test_generate_game():
     assert -1.0 <= sample["value"] <= 1.0
 
 
-## @brief Tests writing and reading the dataset in Parquet format.
+## @brief Tests writing and reading the dataset in DuckDB format.
 def test_dataset_generation_and_loading():
     with tempfile.TemporaryDirectory() as tmp_dir:
-        dataset_path = os.path.join(tmp_dir, "test_dataset.parquet")
+        dataset_path = os.path.join(tmp_dir, "test_dataset.duckdb")
 
         # Generate a dataset with 2 games
         generate_dataset(num_games=2, output_path=dataset_path, minimax_depth=1)

@@ -13,7 +13,6 @@ from rich.panel import Panel
 from rich.text import Text
 from rich.table import Table
 from rich.columns import Columns
-import pyarrow.parquet as pq
 
 # Add python/src to PYTHONPATH dynamically so we can import kribu
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "python", "src"))
@@ -140,33 +139,49 @@ def render_board(green_mask: int, red_mask: int, active_capture_idx: int) -> str
     """
 
 
-def select_game_from_manifest(console: Console) -> str:
-    """Lists simulated games from manifest.csv and prompts user to pick one."""
-    manifest_path = "benchmark/manifest.csv"
-    if not os.path.exists(manifest_path):
-        console.print("[bold red]Error: No manifest.csv found, and no parquet file path was provided.[/bold red]")
+def select_game_from_duckdb(console: Console) -> int:
+    """Lists simulated games from DuckDB and prompts user to pick one."""
+    db_path = "benchmark/dataset.duckdb"
+    if not os.path.exists(db_path):
+        console.print("[bold red]Error: No dataset.duckdb found.[/bold red]")
         sys.exit(1)
 
-    import csv
+    import duckdb
 
-    games = []
-    with open(manifest_path, "r", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            games.append(row)
+    con = duckdb.connect(db_path)
+    rows = con.execute(
+        "SELECT game_id, p1_name, p2_name, outcome, reason, total_turns, win_margin, forced_random_turns FROM games"
+    ).fetchall()
 
-    if not games:
-        console.print("[bold yellow]Manifest is empty. No games simulated yet.[/bold yellow]")
+    if not rows:
+        console.print("[bold yellow]Database is empty. No games simulated yet.[/bold yellow]")
         sys.exit(0)
 
-    # Sort games by Winner primarily, then by ID
-    games.sort(key=lambda g: (g["winner"], int(g["id"])))
+    outcome_map = {0: "P1_WINS", 1: "P2_WINS", 2: "DRAW"}
+
+    games = []
+    for row in rows:
+        games.append(
+            {
+                "id": str(row[0]),
+                "p1Name": row[1],
+                "p2Name": row[2],
+                "outcome": outcome_map.get(row[3], "DRAW"),
+                "reason": row[4],
+                "totalTurns": str(row[5]),
+                "winMargin": str(row[6]),
+                "forcedRandomTurns": str(row[7]),
+            }
+        )
+
+    # Sort games by Winner (outcome) primarily, then by ID
+    games.sort(key=lambda g: (g["outcome"], int(g["id"])))
 
     # Split the games list to render two tables side-by-side
     num_cols = 3
     chunk_size = (len(games) + num_cols - 1) // num_cols
     tables = []
-    
+
     reason_map = {
         "ELIMINATION": "ELIM",
         "STALEMATE": "STAL",
@@ -195,10 +210,18 @@ def select_game_from_manifest(console: Console) -> str:
             win_by = g.get("winMargin", "0") if g.get("outcome") != "DRAW" else "-"
             forced_rnd = g.get("forcedRandomTurns", "0")
             short_reason = reason_map.get(g["reason"], g["reason"])
+
+            if g["outcome"] == "P1_WINS":
+                winner = g["p1Name"]
+                loser = g["p2Name"]
+            else:
+                winner = g["p2Name"]
+                loser = g["p1Name"]
+
             table.add_row(
                 g["id"],
-                g["winner"],
-                g["loser"],
+                winner,
+                loser,
                 short_reason,
                 g["totalTurns"],
                 win_by,
@@ -211,53 +234,77 @@ def select_game_from_manifest(console: Console) -> str:
     valid_ids = {g["id"] for g in games}
 
     while True:
-        choice = input(f"\nSelect a game ID to view or [q] to quit: ").strip()
+        choice = input("\nSelect a game ID to view or [q] to quit: ").strip()
         if choice.lower() == "q":
             sys.exit(0)
         if choice in valid_ids:
-            return f"benchmark/{choice}.parquet"
+            return int(choice)
         console.print(f"[red]Invalid selection. Game ID {choice} not found.[/red]")
 
 
 def main():
     console = Console()
 
-    # Resolve file path
+    # Resolve file path or game ID
+    game_id = None
     if len(sys.argv) > 1:
-        file_path = sys.argv[1]
-    else:
-        file_path = select_game_from_manifest(console)
+        arg = sys.argv[1]
+        if "/" in arg or "." in arg:
+            import re
 
-    if not os.path.exists(file_path):
-        console.print(f"[bold red]Error: File {file_path} not found.[/bold red]")
+            m = re.search(r"\d+", os.path.basename(arg))
+            if m:
+                game_id = int(m.group(0))
+        else:
+            try:
+                game_id = int(arg)
+            except ValueError:
+                pass
+
+    if game_id is None:
+        game_id = select_game_from_duckdb(console)
+
+    db_path = "benchmark/dataset.duckdb"
+    if not os.path.exists(db_path):
+        console.print("[bold red]Error: No dataset.duckdb found.[/bold red]")
         sys.exit(1)
 
-    # Read Parquet
-    console.print(f"[cyan]Loading {file_path}...[/cyan]")
-    table = pq.read_table(file_path)
+    import duckdb
 
-    # Extract schema-level metadata
-    metadata = table.schema.metadata
-    meta = {}
-    if metadata:
-        meta = {k.decode("utf-8"): v.decode("utf-8") for k, v in metadata.items()}
+    # Read from DuckDB
+    con = duckdb.connect(db_path)
 
-    p1_name = meta.get("p1Name", "Player 1")
-    p2_name = meta.get("p2Name", "Player 2")
-    outcome = meta.get("outcome", "N/A")
-    reason = meta.get("reason", "N/A")
-    total_turns = int(meta.get("totalTurns", 0))
-    win_margin = meta.get("winMargin", "0")
-    forced_random_turns = int(meta.get("forcedRandomTurns", 0))
+    # Query game metadata
+    game_row = con.execute(
+        "SELECT p1_name, p2_name, outcome, reason, total_turns, win_margin, forced_random_turns FROM games WHERE game_id = ?",
+        [game_id],
+    ).fetchone()
+
+    if not game_row:
+        console.print(f"[bold red]Error: Game ID {game_id} not found in database.[/bold red]")
+        sys.exit(1)
+
+    p1_name, p2_name, outcome_int, reason, total_turns, win_margin, forced_random_turns = game_row
+    outcome_map = {0: "P1_WINS", 1: "P2_WINS", 2: "DRAW"}
+    outcome = outcome_map.get(outcome_int, "DRAW")
+
+    # Query turns data
+    turns = con.execute(
+        "SELECT me, opp, active_capture_idx, is_p1_turn, chosen_move, player_played FROM turns WHERE game_id = ? ORDER BY turn_idx",
+        [game_id],
+    ).fetchall()
+
+    if not turns:
+        console.print(f"[bold red]Error: No turns found for Game ID {game_id} in database.[/bold red]")
+        sys.exit(1)
 
     # Read column vectors
-    me_col = table.column("me").to_pylist()
-    opp_col = table.column("opp").to_pylist()
-    active_cap_col = table.column("activeCaptureIdx").to_pylist()
-    is_p1_turn_col = table.column("isP1Turn").to_pylist()
-    chosen_move_col = table.column("chosenMove").to_pylist()
-    possible_moves_col = table.column("possibleMoves").to_pylist()
-    player_played_col = table.column("playerPlayed").to_pylist()
+    me_col = [row[0] for row in turns]
+    opp_col = [row[1] for row in turns]
+    active_cap_col = [row[2] for row in turns]
+    is_p1_turn_col = [row[3] for row in turns]
+    chosen_move_col = [row[4] for row in turns]
+    player_played_col = [row[5] for row in turns]
 
     turn_idx = 0
     actual_length = len(me_col)
@@ -320,15 +367,6 @@ def main():
         info_table.add_row("Move Played:", f"[bold yellow]{format_move(chosen_m_id, is_p1_turn)}[/bold yellow]")
 
         console.print(Panel(info_table, title="Turn Information", border_style="yellow"))
-
-        # Display list of available choices
-        moves_list = possible_moves_col[turn_idx]
-        formatted_moves = [format_move(m_id, is_p1_turn) for m_id in moves_list]
-        moves_str = ", ".join(formatted_moves)
-        if len(moves_str) > 100:
-            moves_str = moves_str[:100] + " ... (truncated)"
-
-        console.print(f"[bold cyan]Available Move Options ({len(moves_list)}):[/bold cyan] {moves_str}")
 
         # Footer instructions
         console.print(

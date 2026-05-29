@@ -1,4 +1,4 @@
-.PHONY: setup build hot-build test test-cpp test-python clean format lint run benchmark view-benchmark doc doc-view generate train todo
+.PHONY: setup build hot-build test test-cpp test-python clean format lint run benchmark view-benchmark view consolidate-dataset generate train todo
 
 # Detect number of processors for parallel execution
 NPROC := $(shell nproc)
@@ -44,16 +44,22 @@ generate:
 	PYTHONPATH=python/src uv run python python/src/kribu/generate_dataset.py --games 50 --output dataset.parquet --depth 4
 
 train:
-	PYTHONPATH=python/src uv run python python/src/kribu/train.py --dataset dataset.parquet --epochs 10
+	PYTHONPATH=python/src uv run python -m trainer
+
+inference:
+	PYTHONPATH=python/src uv run python -m inference
+
+duckdbui:
+	duckdb -cmd "CALL start_ui_server();" benchmark/dataset.duckdb
 
 format:
-	uv run ruff format python/
+	PYTHONPATH=python/src uv run ruff format python/
 	find engine bindings \( -name "*.cpp" -o -name "*.hpp" -o -name "*.c" -o -name "*.h" -o -name "*.cc" -o -name "*.cxx" -o -name "*.hh" -o -name "*.hxx" \) | xargs -P $(NPROC) uv run clang-format -i
 	find . -maxdepth 3 \( -name "CMakeLists.txt" -o -name "*.cmake" \) -not -path "*/build/*" -not -path "*/.venv/*" | xargs -P $(NPROC) uv run cmake-format -i
 	find . -maxdepth 2 -name "*.md" -not -path "*/.venv/*" | xargs -P $(NPROC) uv run mdformat
 
 lint:
-	uv run ruff check python/
+	PYTHONPATH=python/src uv run ruff check python/
 	run-clang-tidy -p build/ -j 8 -quiet -header-filter="engine/.*|bindings/.*" -warnings-as-errors='*' "engine/.*"
 
 todo:
