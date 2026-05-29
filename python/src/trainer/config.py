@@ -7,9 +7,8 @@ import dataclasses
 class TrainerConfig:
     # Dataset
     duckdb_path: str = "benchmark/dataset.duckdb"
-    batch_size: int = 1024
+    batch_size: int = 16384  # Massive batch size to saturate the RTX 5060!
     num_workers: int = 0
-    prefetch_factor: int | None = None
 
     # Model Architecture
     input_features: int = 37 + 37 + 6  # me, opp, active_capture

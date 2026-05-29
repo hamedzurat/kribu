@@ -69,32 +69,26 @@ class DuckDBDataset(IterableDataset):
             else:
                 value_target = torch.zeros(len(df), dtype=torch.float32)  # Dummy if not present
 
-            # Yield individual samples (DataLoader will re-batch them or we can yield batches directly)
-            # Since we use DataLoader, yielding items is standard, but yielding batches is faster if we use batch_size=None
-            for i in range(len(df)):
-                yield X_tensor[i], policy_target[i], value_target[i]
+            # Yield the full batch directly (bypasses PyTorch's slow single-item collation overhead)
+            yield X_tensor, policy_target, value_target
 
 
 def get_dataloaders(config):
-    # For performance, we can let DataLoader do the batching,
-    # but since DuckDBDataset reads in chunks, it's efficient.
-    policy_dataset = DuckDBDataset(config.duckdb_path, "policy_data", batch_size=10000)
-    value_dataset = DuckDBDataset(config.duckdb_path, "value_data", batch_size=10000)
+    # For performance, we let the DuckDB dataset handle the batching internally
+    policy_dataset = DuckDBDataset(config.duckdb_path, "policy_data", batch_size=config.batch_size)
+    value_dataset = DuckDBDataset(config.duckdb_path, "value_data", batch_size=config.batch_size)
 
-    # Use standard DataLoader. Shuffle buffer could be added if we wanted,
-    # but sequential reading + small random behavior is okay for now.
+    # Use standard DataLoader with batch_size=None so it doesn't try to re-batch our pre-batched tensors!
     policy_loader = torch.utils.data.DataLoader(
         policy_dataset,
-        batch_size=config.batch_size,
+        batch_size=None,
         num_workers=config.num_workers,
-        prefetch_factor=config.prefetch_factor if config.num_workers > 0 else None,
     )
 
     value_loader = torch.utils.data.DataLoader(
         value_dataset,
-        batch_size=config.batch_size,
+        batch_size=None,
         num_workers=config.num_workers,
-        prefetch_factor=config.prefetch_factor if config.num_workers > 0 else None,
     )
 
     return policy_loader, value_loader
