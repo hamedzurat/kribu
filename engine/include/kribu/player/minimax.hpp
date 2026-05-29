@@ -3,22 +3,15 @@
  * @brief Minimax search algorithm with alpha-beta pruning for Sholo Guti.
  *
  * @details Implements iterative deepening, Principal Variation Search (PVS),
- * null-move pruning, Late Move Reductions (LMR), aspiration windows,
- * killer move heuristic, and Lazy SMP parallelism.
  */
 
 #pragma once
 
 #include <algorithm>
 #include <array>
-#include <random>
-#include <thread>
-#include <type_traits>
 
 #include "kribu/board.hpp"
-#include "kribu/fast_rng.hpp"
 #include "kribu/heuristic.hpp"
-#include "kribu/player/random.hpp"
 #include "kribu/rules.hpp"
 #include "kribu/transposition_table.hpp"
 #include "kribu/types.hpp"
@@ -47,7 +40,7 @@ constexpr int NULL_MOVE_MIN_DEPTH = 3;
  * @brief Minimum number of pieces required for null-move pruning.
  * @details Avoids null-move in zugzwang-prone endgames.
  */
-constexpr i32 NULL_MOVE_MIN_PIECES = 4;
+constexpr i32 NULL_MOVE_MIN_PIECES = 6;
 
 /**
  * @brief Default aspiration window half-width.
@@ -112,23 +105,23 @@ struct OrderedMoveList {
  * @details Used for move ordering: killers are tried after TT move and captures.
  */
 struct KillerTable {
-  /**
-   * @brief 2D array of killer move IDs indexed by [depth][slot].
-   */
   std::array<std::array<i16, NUM_KILLER_SLOTS>, MAX_KILLER_DEPTH> slots{};
 
-  /**
-   * @brief Records a killer move at the given depth.
-   * @param depth The search depth at which the cutoff occurred.
-   * @param moveId The move that caused the cutoff.
-   */
+  constexpr KillerTable() noexcept { clear(); }
+
   constexpr void store(int depth, i16 moveId) noexcept {
     if (depth < 0 || depth >= MAX_KILLER_DEPTH) {
       return;
     }
+
+    if (moveId == END_CHAIN_MOVE || is_capture_move(moveId)) {
+      return;
+    }
+
     if (slots[depth][0] == moveId) {
       return;
     }
+
     slots[depth][1] = slots[depth][0];
     slots[depth][0] = moveId;
   }
@@ -143,13 +136,15 @@ struct KillerTable {
     if (depth < 0 || depth >= MAX_KILLER_DEPTH) {
       return false;
     }
+
     return slots[depth][0] == moveId || slots[depth][1] == moveId;
   }
 
-  /**
-   * @brief Clears all killer move entries.
-   */
-  constexpr void clear() noexcept { slots = {}; }
+  constexpr void clear() noexcept {
+    for (auto& depthSlots : slots) {
+      depthSlots.fill(static_cast<i16>(-1));
+    }
+  }
 };
 
 /**
@@ -166,7 +161,44 @@ struct SearchContext {
   /**
    * @brief Killer move table for move ordering.
    */
-  KillerTable killers{};
+  KillerTable killers;
+
+  /**
+   * @brief Pre-allocated stack-based array tracking Zobrist hashes along the active search path.
+   * @details Using std::array to avoid any heap allocations during the search.
+   */
+  std::array<u64, 128> searchPath{};
+
+  /**
+   * @brief The current size/depth of the search path.
+   */
+  int pathSize = 0;
+};
+
+/**
+ * @struct SearchPathGuard
+ * @brief RAII guard to safely push and pop board hashes on the SearchContext search path.
+ */
+struct SearchPathGuard {
+  SearchContext& ctx;
+  u64 hash;
+
+  SearchPathGuard(SearchContext& context, u64 stateHash) noexcept : ctx(context), hash(stateHash) {
+    if (ctx.pathSize < 128) {
+      ctx.searchPath[ctx.pathSize++] = hash;
+    }
+  }
+
+  ~SearchPathGuard() noexcept {
+    if (ctx.pathSize > 0 && ctx.searchPath[ctx.pathSize - 1] == hash) {
+      ctx.pathSize--;
+    }
+  }
+
+  SearchPathGuard(const SearchPathGuard&) = delete;
+  SearchPathGuard& operator=(const SearchPathGuard&) = delete;
+  SearchPathGuard(SearchPathGuard&&) = delete;
+  SearchPathGuard& operator=(SearchPathGuard&&) = delete;
 };
 
 /**
@@ -268,10 +300,10 @@ constexpr void push_remaining_quiet_moves(
  * @param depth Current search depth (for killer lookup).
  * @return OrderedMoveList with moves prioritized for best cutoff rates.
  */
-[[nodiscard]] constexpr OrderedMoveList order_moves(const MoveList& moves,
-                                                    i32 ttMoveId = -1,
-                                                    const KillerTable* killers = nullptr,
-                                                    i32 depth = 0) noexcept {
+[[nodiscard]] inline OrderedMoveList order_moves(const MoveList& moves,
+                                                 i32 ttMoveId = -1,
+                                                 const KillerTable* killers = nullptr,
+                                                 i32 depth = 0) noexcept {
   OrderedMoveList ordered;
 
   push_tt_move(ordered, moves, ttMoveId);
@@ -282,63 +314,122 @@ constexpr void push_remaining_quiet_moves(
   return ordered;
 }
 
+/**
+ * @brief Checks if the opponent has no legal moves (stalemate or loss).
+ * @param state Current board state.
+ * @return True if the opponent has no legal moves, false otherwise.
+ */
+[[nodiscard]] inline bool opponent_has_no_moves(const boardState& state) noexcept {
+  const boardState flippedState = flip_board(state);
+  return all_possible_moves(flippedState).empty();
+}
+
 // Forward declaration
-template <auto EvalFunc>
-[[nodiscard]] constexpr MinimaxResult alpha_beta(
+[[nodiscard]] inline MinimaxResult alpha_beta(
     const boardState& state, int depth, i32 alpha, i32 beta, SearchContext& ctx, bool isRoot = false) noexcept;
 
+[[nodiscard]] inline MinimaxResult quiescence_search(const boardState& state,
+                                                     i32 alpha,
+                                                     i32 beta,
+                                                     SearchContext& ctx) noexcept;
+
 /**
- * @brief Performs quiescence search to evaluate captures recursively.
- * @details Only explores capture moves (and END_CHAIN_MOVE during chains) to
- * avoid the horizon effect. Uses stand-pat evaluation as the baseline.
- * @tparam EvalFunc Heuristic evaluation function.
+ * @brief Helper for quiescence search during an active capture chain.
  * @param state The current board state.
  * @param alpha Lower bound of the search window.
  * @param beta Upper bound of the search window.
- * @param ctx Search context containing mutable state.
- * @return MinimaxResult with the quiescence score.
+ * @param moves List of all possible moves in the state.
+ * @param ctx Search context.
+ * @return MinimaxResult with the score and move ID.
  */
-template <auto EvalFunc>
-[[nodiscard]] constexpr MinimaxResult quiescence_search(const boardState& state,
-                                                        i32 alpha,
-                                                        i32 beta,
-                                                        SearchContext& ctx) noexcept {
-  i32 standPat = EvalFunc(state);
-  if (standPat >= beta) {
-    return MinimaxResult{.score = beta, .moveId = -1};
-  }
-  alpha = std::max(alpha, standPat);
+[[nodiscard]] inline MinimaxResult quiescence_search_chain(
+    const boardState& state, i32 alpha, i32 beta, const MoveList& moves, SearchContext& ctx) noexcept {
+  int bestMoveId = -1;
+  i32 bestScore = -INFINITY_VAL;
 
-  const MoveList moves = all_possible_moves(state);
-  if (moves.empty()) {
-    return MinimaxResult{.score = standPat, .moveId = -1};
-  }
-
-  OrderedMoveList ordered;
   for (int i = 0; i < moves.count; ++i) {
-    if (is_capture_move(moves.moves[i]) || (state.activeCaptureIdx != -1 && moves.moves[i] == END_CHAIN_MOVE)) {
-      ordered.moves[ordered.count++] = moves.moves[i];
+    const int moveId = moves.moves[i];
+
+    // In a chain, quiescence only cares about captures and END_CHAIN_MOVE.
+    if (!is_capture_move(moveId) && moveId != END_CHAIN_MOVE) {
+      continue;
+    }
+
+    const boardState nextState = apply_move(state, moveId);
+    i32 score = 0;
+
+    if (nextState.activeCaptureIdx == -1) {
+      // Chain ended, turn passes to opponent.
+      const boardState flippedState = flip_board(nextState);
+      const MinimaxResult res = quiescence_search(flippedState, -beta, -alpha, ctx);
+      score = -res.score;
+    } else {
+      // Same player continues the chain.
+      const MinimaxResult res = quiescence_search(nextState, alpha, beta, ctx);
+      score = res.score;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestMoveId = moveId;
+    }
+
+    alpha = std::max(alpha, bestScore);
+    if (alpha >= beta) {
+      break;
     }
   }
 
-  if (ordered.count == 0) {
-    return MinimaxResult{.score = standPat, .moveId = -1};
+  // Defensive fallback. This should usually not happen if active-chain move
+  // generation always includes captures and/or END_CHAIN_MOVE.
+  if (bestMoveId == -1) {
+    return MinimaxResult{.score = heuristics::evaluate(state, 1), .moveId = -1};
   }
+
+  return MinimaxResult{.score = bestScore, .moveId = bestMoveId};
+}
+
+/**
+ * @brief Helper for quiescence search during normal non-chain play.
+ * @param state The current board state.
+ * @param alpha Lower bound of the search window.
+ * @param beta Upper bound of the search window.
+ * @param moves List of all possible moves in the state.
+ * @param ctx Search context.
+ * @return MinimaxResult with the score and move ID.
+ */
+[[nodiscard]] inline MinimaxResult quiescence_search_normal(
+    const boardState& state, i32 alpha, i32 beta, const MoveList& moves, SearchContext& ctx) noexcept {
+  const i32 standPat = heuristics::evaluate(state, 1);
+
+  if (standPat >= beta) {
+    return MinimaxResult{.score = beta, .moveId = -1};
+  }
+
+  alpha = std::max(alpha, standPat);
 
   int bestMoveId = -1;
   i32 bestScore = standPat;
 
-  for (int i = 0; i < ordered.count; ++i) {
-    const int moveId = ordered.moves[i];
-    const boardState nextState = apply_move(state, moveId);
+  for (int i = 0; i < moves.count; ++i) {
+    const int moveId = moves.moves[i];
 
+    // Outside chains, quiescence only searches captures.
+    if (!is_capture_move(moveId)) {
+      continue;
+    }
+
+    const boardState nextState = apply_move(state, moveId);
     i32 score = 0;
+
     if (nextState.activeCaptureIdx == -1) {
+      // Turn passes to opponent.
       const boardState flippedState = flip_board(nextState);
-      const MinimaxResult res = quiescence_search<EvalFunc>(flippedState, -beta, -alpha, ctx);
+      const MinimaxResult res = quiescence_search(flippedState, -beta, -alpha, ctx);
       score = -res.score;
     } else {
-      const MinimaxResult res = quiescence_search<EvalFunc>(nextState, alpha, beta, ctx);
+      // Same player continues capture chain.
+      const MinimaxResult res = quiescence_search(nextState, alpha, beta, ctx);
       score = res.score;
     }
 
@@ -357,48 +448,71 @@ template <auto EvalFunc>
 }
 
 /**
- * @brief Checks for draw by repetition in the game history.
+ * @brief Performs quiescence search to evaluate captures recursively.
+ * @details Only explores capture moves (and END_CHAIN_MOVE during chains) to
+ * avoid the horizon effect. Uses stand-pat evaluation as the baseline.
  * @param state The current board state.
- * @return True if the position has been repeated enough times to be considered a draw.
+ * @param alpha Lower bound of the search window.
+ * @param beta Upper bound of the search window.
+ * @param ctx Search context containing mutable state.
+ * @return MinimaxResult with the quiescence score.
  */
-[[nodiscard]] inline bool is_draw_by_repetition(const boardState& state) noexcept {
-  if (maxRepetitions <= 0 || currentGameHistory.empty()) {
-    return false;
+[[nodiscard]] inline MinimaxResult quiescence_search(const boardState& state,
+                                                     i32 alpha,
+                                                     i32 beta,
+                                                     SearchContext& ctx) noexcept {
+  // Terminal: current player has captured all opponent pieces.
+  if (piece_count(state.opp) == 0) {
+    return MinimaxResult{.score = INFINITY_VAL, .moveId = -1};
   }
-  int repetitions = 0;
-  for (u64 prevHash : currentGameHistory) {
-    if (prevHash == state.hash) {
-      repetitions++;
-      if (repetitions >= maxRepetitions - 1) {
-        return true;
-      }
-    }
+
+  // Terminal: current player has no pieces.
+  if (piece_count(state.me) == 0) {
+    return MinimaxResult{.score = -INFINITY_VAL, .moveId = -1};
   }
-  return false;
+
+  // Important:
+  // Only check opponent stalemate when NOT inside an active capture chain.
+  // During a chain, it is still the same player's turn.
+  if (state.activeCaptureIdx == -1 && opponent_has_no_moves(state)) {
+    return MinimaxResult{.score = INFINITY_VAL, .moveId = -1};
+  }
+
+  const MoveList moves = all_possible_moves(state);
+
+  // Current player has no legal moves.
+  if (moves.empty()) {
+    return MinimaxResult{.score = -INFINITY_VAL, .moveId = -1};
+  }
+
+  // Delegate based on active capture chain status to keep cognitive complexity low.
+  if (state.activeCaptureIdx != -1) {
+    return quiescence_search_chain(state, alpha, beta, moves, ctx);
+  }
+
+  return quiescence_search_normal(state, alpha, beta, moves, ctx);
 }
 
 /**
- * @brief Evaluates terminal conditions (win/loss/draw).
+ * @brief Evaluates terminal conditions (win/loss/stalemate).
  * @param state The current board state.
  * @param depth Current remaining search depth.
  * @param result Output parameter set if the position is terminal.
- * @param isRoot True if this is the root node of the search.
  * @return True if the position is terminal and result was set, false otherwise.
  */
-[[nodiscard]] inline bool check_terminal(const boardState& state,
-                                         int depth,
-                                         MinimaxResult& result,
-                                         bool isRoot = false) noexcept {
-  if (!isRoot && !std::is_constant_evaluated() && is_draw_by_repetition(state)) {
-    result = MinimaxResult{.score = 0, .moveId = -1};
-    return true;
-  }
+[[nodiscard]] inline bool check_terminal(const boardState& state, int depth, MinimaxResult& result) noexcept {
   if (piece_count(state.opp) == 0) {
     result = MinimaxResult{.score = INFINITY_VAL + depth, .moveId = -1};
     return true;
   }
+
   if (piece_count(state.me) == 0) {
     result = MinimaxResult{.score = -INFINITY_VAL - depth, .moveId = -1};
+    return true;
+  }
+
+  if (state.activeCaptureIdx == -1 && opponent_has_no_moves(state)) {
+    result = MinimaxResult{.score = INFINITY_VAL + depth, .moveId = -1};
     return true;
   }
   return false;
@@ -409,7 +523,6 @@ template <auto EvalFunc>
  * @details Passes the turn to the opponent (null move) and searches at reduced depth.
  * If the opponent still can't beat beta, the node is pruned. Disabled during
  * capture chains and endgames with few pieces.
- * @tparam EvalFunc Heuristic evaluation function.
  * @param state The current board state.
  * @param depth Current remaining search depth.
  * @param beta Upper bound of the search window.
@@ -417,7 +530,6 @@ template <auto EvalFunc>
  * @param cutoffScore Output: the score if pruning succeeds.
  * @return True if null-move pruning produced a cutoff, false otherwise.
  */
-template <auto EvalFunc>
 [[nodiscard]] inline bool try_null_move_pruning(
     const boardState& state, int depth, i32 beta, SearchContext& ctx, i32& cutoffScore) noexcept {
   // Don't null-move during capture chains (passing is meaningless mid-chain)
@@ -436,7 +548,7 @@ template <auto EvalFunc>
   // "Pass" the turn by flipping the board without making a move
   const boardState nullState = flip_board(state);
   const int reducedDepth = depth - 1 - NULL_MOVE_R;
-  const MinimaxResult nullRes = alpha_beta<EvalFunc>(nullState, reducedDepth, -beta, -beta + 1, ctx);
+  const MinimaxResult nullRes = alpha_beta(nullState, reducedDepth, -beta, -beta + 1, ctx);
   const i32 nullScore = -nullRes.score;
 
   if (nullScore >= beta) {
@@ -450,7 +562,6 @@ template <auto EvalFunc>
  * @brief Searches a child move using PVS (Principal Variation Search) strategy.
  * @details The first move is searched with a full window. Subsequent moves are
  * searched with a null (zero) window first; if they fail high, a full re-search is done.
- * @tparam EvalFunc Heuristic evaluation function.
  * @param nextState The board state after applying the move.
  * @param depth Current remaining search depth.
  * @param alpha Current alpha bound.
@@ -459,30 +570,29 @@ template <auto EvalFunc>
  * @param ctx Search context.
  * @return The negamax score for this child move.
  */
-template <auto EvalFunc>
-[[nodiscard]] constexpr i32 search_child_pvs(
+[[nodiscard]] inline i32 search_child_pvs(
     const boardState& nextState, int depth, i32 alpha, i32 beta, int moveIndex, SearchContext& ctx) noexcept {
   // Determine if the turn flips (non-chain move)
   const bool turnFlips = (nextState.activeCaptureIdx == -1);
   const boardState searchState = turnFlips ? flip_board(nextState) : nextState;
-  const int childDepth = depth - 1;
+  const int childDepth = turnFlips ? depth - 1 : depth;
 
   if (moveIndex == 0) {
     // First move: full window search
-    const MinimaxResult res = turnFlips ? alpha_beta<EvalFunc>(searchState, childDepth, -beta, -alpha, ctx)
-                                        : alpha_beta<EvalFunc>(searchState, childDepth, alpha, beta, ctx);
+    const MinimaxResult res = turnFlips ? alpha_beta(searchState, childDepth, -beta, -alpha, ctx)
+                                        : alpha_beta(searchState, childDepth, alpha, beta, ctx);
     return turnFlips ? -res.score : res.score;
   }
 
   // PVS: null-window scout search first
-  MinimaxResult res = turnFlips ? alpha_beta<EvalFunc>(searchState, childDepth, -alpha - 1, -alpha, ctx)
-                                : alpha_beta<EvalFunc>(searchState, childDepth, alpha, alpha + 1, ctx);
+  MinimaxResult res = turnFlips ? alpha_beta(searchState, childDepth, -alpha - 1, -alpha, ctx)
+                                : alpha_beta(searchState, childDepth, alpha, alpha + 1, ctx);
   i32 score = turnFlips ? -res.score : res.score;
 
   // Re-search with full window if the scout found a better move
   if (score > alpha && score < beta) {
-    res = turnFlips ? alpha_beta<EvalFunc>(searchState, childDepth, -beta, -alpha, ctx)
-                    : alpha_beta<EvalFunc>(searchState, childDepth, alpha, beta, ctx);
+    res = turnFlips ? alpha_beta(searchState, childDepth, -beta, -alpha, ctx)
+                    : alpha_beta(searchState, childDepth, alpha, beta, ctx);
     score = turnFlips ? -res.score : res.score;
   }
 
@@ -519,7 +629,6 @@ template <auto EvalFunc>
  * @brief Searches a child move with Late Move Reduction applied.
  * @details Late-ordered quiet moves are searched at reduced depth first.
  * If the reduced search beats alpha, a full-depth re-search is performed.
- * @tparam EvalFunc Heuristic evaluation function.
  * @param nextState Board state after applying the move.
  * @param moveId The move ID being searched.
  * @param depth Current search depth.
@@ -529,26 +638,25 @@ template <auto EvalFunc>
  * @param ctx Search context.
  * @return The negamax score for this child.
  */
-template <auto EvalFunc>
-[[nodiscard]] constexpr i32 search_child_lmr(const boardState& nextState,
-                                             int moveId,
-                                             int depth,
-                                             i32 alpha,
-                                             i32 beta,
-                                             int moveIndex,
-                                             SearchContext& ctx) noexcept {
+[[nodiscard]] inline i32 search_child_lmr(const boardState& nextState,
+                                          int moveId,
+                                          int depth,
+                                          i32 alpha,
+                                          i32 beta,
+                                          int moveIndex,
+                                          SearchContext& ctx) noexcept {
   int reduction = lmr_reduction(depth, moveIndex, moveId);
 
   if (reduction > 0) {
     // Reduced-depth search
-    i32 score = search_child_pvs<EvalFunc>(nextState, depth - reduction, alpha, beta, moveIndex, ctx);
+    i32 score = search_child_pvs(nextState, depth - reduction, alpha, beta, moveIndex, ctx);
     // If reduced search fails high, re-search at full depth
     if (score <= alpha) {
       return score;
     }
   }
 
-  return search_child_pvs<EvalFunc>(nextState, depth, alpha, beta, moveIndex, ctx);
+  return search_child_pvs(nextState, depth, alpha, beta, moveIndex, ctx);
 }
 
 /**
@@ -561,7 +669,7 @@ template <auto EvalFunc>
  * @param originalAlpha The alpha value at the start of the node.
  * @param beta The beta value at the node.
  */
-constexpr void store_tt_result(
+inline void store_tt_result(
     SearchContext& ctx, u64 hash, int depth, i32 bestScore, int bestMoveId, i32 originalAlpha, i32 beta) noexcept {
   if (ctx.transTable == nullptr) {
     return;
@@ -577,7 +685,6 @@ constexpr void store_tt_result(
 
 /**
  * @brief Evaluates all ordered children and finds the best move.
- * @tparam EvalFunc Heuristic evaluation function.
  * @param state The current board state.
  * @param depth The current search depth.
  * @param alpha The lower bound score of the search window.
@@ -586,13 +693,12 @@ constexpr void store_tt_result(
  * @param ctx Search context containing mutable state.
  * @return A MinimaxResult containing the best score and best move ID.
  */
-template <auto EvalFunc>
-[[nodiscard]] constexpr MinimaxResult evaluate_children(const boardState& state,
-                                                        int depth,
-                                                        i32 alpha,
-                                                        i32 beta,
-                                                        const OrderedMoveList& ordered,
-                                                        SearchContext& ctx) noexcept {
+[[nodiscard]] inline MinimaxResult evaluate_children(const boardState& state,
+                                                     int depth,
+                                                     i32 alpha,
+                                                     i32 beta,
+                                                     const OrderedMoveList& ordered,
+                                                     SearchContext& ctx) noexcept {
   int bestMoveId = -1;
   i32 bestScore = -INFINITY_VAL - 10000;
 
@@ -600,7 +706,7 @@ template <auto EvalFunc>
     const int moveId = ordered.moves[i];
     const boardState nextState = apply_move(state, moveId);
 
-    i32 score = search_child_lmr<EvalFunc>(nextState, moveId, depth, alpha, beta, i, ctx);
+    i32 score = search_child_lmr(nextState, moveId, depth, alpha, beta, i, ctx);
 
     if (score > bestScore) {
       bestScore = score;
@@ -622,7 +728,6 @@ template <auto EvalFunc>
 
 /**
  * @brief Core alpha-beta search with PVS, null-move pruning, LMR, and killer heuristic.
- * @tparam EvalFunc Heuristic evaluation function.
  * @param state The current board state.
  * @param depth The maximum search depth remaining.
  * @param alpha The lower bound score of the search window.
@@ -631,19 +736,30 @@ template <auto EvalFunc>
  * @param isRoot True if this is the root node of the search.
  * @return A MinimaxResult containing the best score and best move ID.
  */
-template <auto EvalFunc>
-[[nodiscard]] constexpr MinimaxResult alpha_beta(
+[[nodiscard]] inline MinimaxResult alpha_beta(
     const boardState& state, int depth, i32 alpha, i32 beta, SearchContext& ctx, bool isRoot) noexcept {
+  // Repetition/cycle detection on the active search path
+  if (!isRoot) {
+    for (int i = 0; i < ctx.pathSize; ++i) {
+      if (ctx.searchPath[i] == state.hash) {
+        return MinimaxResult{.score = 0, .moveId = -1};
+      }
+    }
+  }
+
   // Terminal checks
   MinimaxResult termResult;
-  if (check_terminal(state, depth, termResult, isRoot)) {
+  if (check_terminal(state, depth, termResult)) {
     return termResult;
   }
 
   // Leaf node: drop to quiescence search
   if (depth <= 0) {
-    return quiescence_search<EvalFunc>(state, alpha, beta, ctx);
+    return quiescence_search(state, alpha, beta, ctx);
   }
+
+  // Push current state to the stack-allocated search path
+  SearchPathGuard guard(ctx, state.hash);
 
   // Transposition table probe
   i32 ttScore = 0;
@@ -655,11 +771,9 @@ template <auto EvalFunc>
   }
 
   // Null-move pruning
-  if (!isRoot && !std::is_constant_evaluated()) {
-    i32 cutoff = 0;
-    if (try_null_move_pruning<EvalFunc>(state, depth, beta, ctx, cutoff)) {
-      return MinimaxResult{.score = cutoff, .moveId = -1};
-    }
+  i32 cutoff = 0;
+  if (try_null_move_pruning(state, depth, beta, ctx, cutoff)) {
+    return MinimaxResult{.score = cutoff, .moveId = -1};
   }
 
   // Generate and order moves
@@ -671,7 +785,7 @@ template <auto EvalFunc>
   const OrderedMoveList ordered = order_moves(moves, ttMoveId, &ctx.killers, depth);
   const i32 originalAlpha = alpha;
 
-  MinimaxResult bestResult = evaluate_children<EvalFunc>(state, depth, alpha, beta, ordered, ctx);
+  MinimaxResult bestResult = evaluate_children(state, depth, alpha, beta, ordered, ctx);
 
   store_tt_result(ctx, state.hash, depth, bestResult.score, bestResult.moveId, originalAlpha, beta);
 
@@ -680,7 +794,6 @@ template <auto EvalFunc>
 
 /**
  * @brief Performs one iteration of iterative deepening search at a specific depth.
- * @tparam EvalFunc Heuristic evaluation function.
  * @param state The root board state.
  * @param depth The depth to search.
  * @param alpha Lower bound of the aspiration window.
@@ -688,18 +801,17 @@ template <auto EvalFunc>
  * @param ctx Search context.
  * @return MinimaxResult with the best score and move at this depth.
  */
-template <auto EvalFunc>
 [[nodiscard]] inline MinimaxResult search_at_depth(
     const boardState& state, int depth, i32 alpha, i32 beta, SearchContext& ctx) noexcept {
-  MinimaxResult res = alpha_beta<EvalFunc>(state, depth, alpha, beta, ctx, true);
+  MinimaxResult res = alpha_beta(state, depth, alpha, beta, ctx, true);
 
   // Aspiration window fail-low: re-search with full window
   if (res.score <= alpha) {
-    res = alpha_beta<EvalFunc>(state, depth, -INFINITY_VAL, beta, ctx, true);
+    res = alpha_beta(state, depth, -INFINITY_VAL, beta, ctx, true);
   }
   // Aspiration window fail-high: re-search with full window
   if (res.score >= beta) {
-    res = alpha_beta<EvalFunc>(state, depth, alpha, INFINITY_VAL, ctx, true);
+    res = alpha_beta(state, depth, alpha, INFINITY_VAL, ctx, true);
   }
 
   return res;
@@ -710,13 +822,11 @@ template <auto EvalFunc>
  * @details Searches from depth 1 up to the target depth, using the previous
  * iteration's score to set narrow aspiration windows for the next iteration.
  * Each shallower iteration populates the TT, greatly improving move ordering.
- * @tparam EvalFunc Heuristic evaluation function.
  * @param state The root board state.
  * @param targetDepth The maximum depth to search.
  * @param ctx Search context containing TT and killers.
  * @return MinimaxResult with the best score and move from the deepest completed search.
  */
-template <auto EvalFunc>
 [[nodiscard]] inline MinimaxResult iterative_deepening(const boardState& state,
                                                        int targetDepth,
                                                        SearchContext& ctx) noexcept {
@@ -725,6 +835,7 @@ template <auto EvalFunc>
 
   for (int depth = 1; depth <= targetDepth; ++depth) {
     ctx.killers.clear();
+    ctx.pathSize = 0;
 
     i32 alpha = -INFINITY_VAL;
     i32 beta = INFINITY_VAL;
@@ -735,70 +846,9 @@ template <auto EvalFunc>
       beta = prevScore + ASPIRATION_DELTA;
     }
 
-    MinimaxResult res = search_at_depth<EvalFunc>(state, depth, alpha, beta, ctx);
+    MinimaxResult res = search_at_depth(state, depth, alpha, beta, ctx);
     best = res;
     prevScore = res.score;
-  }
-
-  return best;
-}
-
-/**
- * @brief Performs Lazy SMP parallel search.
- * @details Spawns multiple threads, each running iterative deepening on the
- * same root position with a shared transposition table. Threads naturally
- * explore different parts of the tree because each one finds different TT
- * entries from the others, creating implicit search diversification. The best
- * result from any thread is returned.
- * @tparam EvalFunc Heuristic evaluation function.
- * @tparam NumThreads Number of parallel search threads.
- * @param state The root board state.
- * @param targetDepth The maximum depth to search.
- * @param ctx Search context with a shared TT.
- * @return MinimaxResult with the best score and move found by any thread.
- */
-template <auto EvalFunc, int NumThreads>
-[[nodiscard]] inline MinimaxResult lazy_smp_search(const boardState& state,
-                                                   int targetDepth,
-                                                   SearchContext& ctx) noexcept {
-  static_assert(NumThreads >= 2, "NumThreads must be at least 2");
-
-  struct ThreadResult {
-    MinimaxResult result{};
-    u64 nodes = 0;
-  };
-
-  std::array<ThreadResult, NumThreads> results{};
-  std::array<std::thread, NumThreads> threads{};
-
-  // Each thread gets its own search context but shares the TT via pointer
-  for (int threadIdx = 0; threadIdx < NumThreads; ++threadIdx) {
-    threads[threadIdx] = std::thread([&state, targetDepth, &ctx, &results, threadIdx]() {
-      SearchContext localCtx;
-      localCtx.transTable = ctx.transTable;  // Shared TT
-
-      // Diversify: thread 0 searches target depth, others search ±1
-      // to explore different parts of the tree
-      int threadDepth = targetDepth;
-      if (threadIdx % 2 == 1) {
-        threadDepth = std::max(1, targetDepth + (threadIdx % 2 == 1 ? 1 : 0));
-      }
-
-      results[threadIdx].result = iterative_deepening<EvalFunc>(state, threadDepth, localCtx);
-    });
-  }
-
-  for (auto& thr : threads) {
-    thr.join();
-  }
-
-  // Pick best result: prefer the deepest-searching thread (thread 0),
-  // but take any thread's result if it found a clearly better score
-  MinimaxResult best = results[0].result;
-  for (int threadIdx = 0; threadIdx < NumThreads; ++threadIdx) {
-    if (results[threadIdx].result.score > best.score) {
-      best = results[threadIdx].result;
-    }
   }
 
   return best;
@@ -814,7 +864,6 @@ template <auto EvalFunc, int NumThreads>
  * @param transTable Optional pointer to transposition table.
  * @return A MinimaxResult containing the best score and best move ID.
  */
-template <auto EvalFunc>
 [[nodiscard]] inline MinimaxResult minimax(
     const boardState& state, int depth, i32 alpha, i32 beta, TranspositionTable* transTable = nullptr) noexcept {
   // alpha/beta kept for interface compatibility; iterative deepening manages its own windows
@@ -824,38 +873,31 @@ template <auto EvalFunc>
   SearchContext ctx;
   ctx.transTable = transTable;
 
-  MinimaxResult res = iterative_deepening<EvalFunc>(state, depth, ctx);
+  MinimaxResult res = iterative_deepening(state, depth, ctx);
   return res;
-}
-
-/**
- * @brief Compatibility wrapper for minimax search.
- */
-[[nodiscard]] inline MinimaxResult minimax(const boardState& state, int depth, i32 alpha, i32 beta) noexcept {
-  return minimax<heuristics::evaluate_by_node_values<heuristics::HEURISTIC_NODE_WEIGHTS>>(
-      state, depth, alpha, beta, nullptr);
 }
 
 /**
  * @brief Player maker utilizing minimax search with all optimizations.
  * @details Uses iterative deepening, PVS, null-move pruning, LMR, aspiration
  *          windows, killer moves, and Lazy SMP parallelism.
- * @tparam EvalFunc Heuristic function evaluating the board state.
  * @tparam Depth The search depth.
- * @tparam NumThreads Number of parallel Lazy SMP threads.
  * @param state The current board state.
  * @return The selected move ID.
  */
-template <auto EvalFunc, int Depth, int NumThreads = 2>
+template <int Depth>
 [[nodiscard]] inline int minimax_player_maker(const boardState& state) {
   static_assert(Depth >= 2, "Depth must be at least 2");
-  static_assert(NumThreads >= 2, "NumThreads must be at least 2");
 
   thread_local TranspositionTable localTT(1048576);
   SearchContext ctx;
   ctx.transTable = &localTT;
 
-  MinimaxResult res = lazy_smp_search<EvalFunc, NumThreads>(state, Depth, ctx);
+  if (state == INITIAL_STATE) {
+    localTT.clear();
+  }
+
+  MinimaxResult res = iterative_deepening(state, Depth, ctx);
   return res.moveId;
 }
 

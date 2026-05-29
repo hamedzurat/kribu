@@ -5,10 +5,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <kribu/board.hpp>
-#include <kribu/heuristic.hpp>
 #include <kribu/player/mcts.hpp>
 #include <kribu/rules.hpp>
-#include <kribu/types.hpp>
 
 using namespace kribu::board;
 using namespace kribu::player;
@@ -16,9 +14,7 @@ using namespace kribu::player;
 TEST_CASE("MCTS Initial State Move", "[mcts]") {
   boardState state = INITIAL_STATE;
   // Test sequential MCTS with HeuristicRollout
-  int moveId = mcts_player_maker<
-      HeuristicRollout<kribu::heuristics::evaluate_by_node_values<kribu::heuristics::HEURISTIC_NODE_WEIGHTS>>,
-      100>(state);
+  int moveId = mcts_player_maker<HeuristicRollout, 100>(state);
   REQUIRE(moveId != -1);
   REQUIRE(kribu::sholoGuti::is_valid(state, moveId));
 }
@@ -26,7 +22,7 @@ TEST_CASE("MCTS Initial State Move", "[mcts]") {
 TEST_CASE("MCTS Parallel Initial State Move", "[mcts]") {
   boardState state = INITIAL_STATE;
   // Test parallel MCTS (2 threads)
-  int moveId = mcts_player_maker<RandomRollout, 100, 2>(state);
+  int moveId = mcts_player_maker<RandomRollout, 100>(state);
   REQUIRE(moveId != -1);
   REQUIRE(kribu::sholoGuti::is_valid(state, moveId));
 }

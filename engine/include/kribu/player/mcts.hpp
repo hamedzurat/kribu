@@ -9,7 +9,6 @@
  * - O(1) node expansion via tracked move index
  * - Capture-priority expansion ordering
  * - Early termination when one move clearly dominates
- * - Root parallelism via independent trees with majority voting
  * - Epsilon-greedy rollout policy for informed simulations
  * - Fast piece-count terminal check in rollouts
  */
@@ -19,9 +18,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <numbers>
-#include <random>
-#include <thread>
 #include <vector>
 
 #include "kribu/board.hpp"
@@ -77,7 +75,7 @@ constexpr f32 MCTS_EPSILON = 0.3F;
 /**
  * @brief Divisor for tanh-based score-to-value normalization.
  */
-constexpr f32 MCTS_SCORE_SCALE = 50.0F;
+constexpr f32 MCTS_SCORE_SCALE = 3000.0F;
 
 // ── Utility Functions ───────────────────────────────────────────────────
 
@@ -130,18 +128,14 @@ struct RandomRollout {
    * @param state Board state to evaluate.
    * @return Piece count evaluation score.
    */
-  static f64 evaluate(const boardState& state) noexcept {
-    return static_cast<f64>(heuristics::evaluate_piece_count(state));
-  }
+  static f64 evaluate(const boardState& state) noexcept { return static_cast<f64>(heuristics::evaluate(state, 0)); }
 };
 
 /**
  * @struct HeuristicRollout
  * @brief Playout policy that prioritizes captures (to keep rollouts realistic), otherwise random,
  *        and uses a custom evaluation.
- * @tparam EvalFunc Custom evaluation function.
- */
-template <auto EvalFunc>
+ * */
 struct HeuristicRollout {
   /**
    * @brief Selects a capture move if available, otherwise random.
@@ -160,11 +154,9 @@ struct HeuristicRollout {
       }
     }
     if (!captures.empty()) {
-      std::uniform_int_distribution<int> dist(0, captures.size() - 1);
-      return captures.moves[dist(rng)];
+      return captures.moves[random_index(captures.size())];
     }
-    std::uniform_int_distribution<int> dist(0, moves.size() - 1);
-    return moves.moves[dist(rng)];
+    return moves.moves[random_index(moves.size())];
   }
 
   /**
@@ -172,7 +164,7 @@ struct HeuristicRollout {
    * @param state Board state to evaluate.
    * @return Evaluation score.
    */
-  static f64 evaluate(const boardState& state) noexcept { return static_cast<f64>(EvalFunc(state)); }
+  static f64 evaluate(const boardState& state) noexcept { return static_cast<f64>(heuristics::evaluate(state, 1)); }
 };
 
 /**
@@ -181,9 +173,7 @@ struct HeuristicRollout {
  *        probability (1 - ε), or a random move with probability ε.
  * @details Produces more realistic rollouts than pure random by exploiting
  *        domain knowledge, while ε-randomness prevents deterministic loops.
- * @tparam EvalFunc Heuristic evaluation function.
- */
-template <auto EvalFunc>
+ * */
 struct EpsilonGreedyRollout {
   /**
    * @brief Selects a move using epsilon-greedy strategy.
@@ -195,10 +185,8 @@ struct EpsilonGreedyRollout {
     if (moves.empty()) {
       return -1;
     }
-    std::uniform_real_distribution<f32> prob(0.0F, 1.0F);
-    if (prob(rng) < MCTS_EPSILON) {
-      std::uniform_int_distribution<int> dist(0, moves.size() - 1);
-      return moves.moves[dist(rng)];
+    if (random_chance(MCTS_EPSILON)) {
+      return moves.moves[random_index(moves.size())];
     }
     return pick_best_move(state, moves);
   }
@@ -208,7 +196,7 @@ struct EpsilonGreedyRollout {
    * @param state Board state to evaluate.
    * @return Evaluation score.
    */
-  static f64 evaluate(const boardState& state) noexcept { return static_cast<f64>(EvalFunc(state)); }
+  static f64 evaluate(const boardState& state) noexcept { return static_cast<f64>(heuristics::evaluate(state, 1)); }
 
  private:
   /**
@@ -219,14 +207,14 @@ struct EpsilonGreedyRollout {
    */
   static int pick_best_move(const boardState& state, const MoveList& moves) {
     int bestMove = moves.moves[0];
-    i32 bestVal = -999999;
+    i32 bestVal = std::numeric_limits<i32>::min();
     for (int i = 0; i < moves.count; ++i) {
       const boardState next = apply_move(state, moves.moves[i]);
       i32 val = 0;
       if (next.activeCaptureIdx == -1) {
-        val = -EvalFunc(flip_board(next));
+        val = -heuristics::evaluate(flip_board(next), 0);
       } else {
-        val = EvalFunc(next);
+        val = heuristics::evaluate(next, 0);
       }
       if (val > bestVal) {
         bestVal = val;
@@ -309,6 +297,8 @@ struct MCTSNode {
    */
   bool isTerminal = false;
 
+  std::array<i16, MAX_MOVES_PER_STATE> legalMoves{};
+
   /**
    * @brief Checks if all legal moves have been expanded.
    * @return True if every legal move has a corresponding child.
@@ -387,21 +377,29 @@ class MCTS {
     node.moveId = move;
     node.turnFlipped = turnFlipped;
 
-    // Fast terminal check by piece elimination
-    if (piece_count(state.me) == 0 || piece_count(state.opp) == 0) {
+    if (piece_count(state.opp) == 0 || piece_count(state.me) == 0) {
       node.isTerminal = true;
       return node;
     }
 
-    // Check stalemate (no legal moves)
-    const MoveList moves = all_possible_moves(state);
+    if (opponent_has_no_moves(state)) {
+      node.isTerminal = true;
+      return node;
+    }
+
+    const MoveList moves = generate_expansion_moves(state);
     if (moves.empty()) {
       node.isTerminal = true;
       return node;
     }
 
     node.numLegalMoves = moves.count;
-    node.prior = mcts_score_to_value(static_cast<f32>(RolloutPolicy::evaluate(state)));
+
+    for (int moveIndex = 0; moveIndex < moves.count; ++moveIndex) {
+      node.legalMoves[moveIndex] = moves.moves[moveIndex];
+    }
+
+    node.prior = mcts_score_to_value(static_cast<f32>(heuristics::evaluate(state, 3)));
     return node;
   }
 
@@ -422,9 +420,15 @@ class MCTS {
     backpropagate(nodeIdx, val);
   }
 
+  [[nodiscard]] static bool opponent_has_no_moves(const boardState& state) noexcept {
+    const boardState flippedState = flip_board(state);
+    return all_possible_moves(flippedState).empty();
+  }
+
   /**
-   * @brief Selects a leaf node by following UCT from the root.
-   * @param nodeIdx Starting node index (typically 0).
+   * @brief Selects a leaf node by following UCT through fully expanded nodes.
+   * @param nodeIdx Starting node index
+   * (typically 0).
    * @return Pool index of the selected leaf node.
    */
   [[nodiscard]] int select_leaf(int nodeIdx) {
@@ -447,9 +451,8 @@ class MCTS {
     }
 
     // Regenerate moves in capture-first order (deterministic from state)
-    const MoveList moves = generate_expansion_moves(node_at(nodeIdx).state);
-    int expandIdx = node_at(nodeIdx).nextExpandIdx;
-    int chosenMoveId = moves.moves[expandIdx];
+    const int expandIndex = node_at(nodeIdx).nextExpandIdx;
+    const int chosenMoveId = node_at(nodeIdx).legalMoves[expandIndex];
 
     // Prepare child state
     boardState childState = apply_move(node_at(nodeIdx).state, chosenMoveId);
@@ -548,23 +551,26 @@ class MCTS {
   [[nodiscard]] f32 compute_child_uct(int childIdx, f32 parentWinRate, f32 logParent) const {
     const MCTSNode& child = node_at(childIdx);
 
+    f32 childPrior = child.prior;
+    if (child.turnFlipped) {
+      childPrior = 1.0F - childPrior;
+    }
+
     f32 childWinRate = 0.0F;
     if (child.visits > 0.0F) {
       childWinRate = child.valueSum / child.visits;
-      // If the turn flipped between parent and child, the child's value is from the
-      // opponent's perspective. The parent wants to minimize the opponent's win rate.
+
       if (child.turnFlipped) {
         childWinRate = 1.0F - childWinRate;
       }
     }
 
-    // First Play Urgency: skip round-robin, use informed default
     if (child.visits < 1.0F) {
-      return parentWinRate - MCTS_FPU_REDUCTION + (child.prior * MCTS_BIAS_WEIGHT);
+      return parentWinRate - MCTS_FPU_REDUCTION + (childPrior * MCTS_BIAS_WEIGHT);
     }
 
-    f32 exploration = MCTS_EXPLORATION_C * std::sqrt(logParent / child.visits);
-    f32 bias = child.prior * MCTS_BIAS_WEIGHT / (child.visits + 1.0F);
+    const f32 exploration = MCTS_EXPLORATION_C * std::sqrt(logParent / child.visits);
+    const f32 bias = childPrior * MCTS_BIAS_WEIGHT / (child.visits + 1.0F);
 
     return childWinRate + exploration + bias;
   }
@@ -602,14 +608,20 @@ class MCTS {
     if (piece_count(state.opp) == 0) {
       return 1.0F;
     }
+
     if (piece_count(state.me) == 0) {
       return 0.0F;
     }
-    // Stalemate: active player has no moves → loss
+
+    if (opponent_has_no_moves(state)) {
+      return 1.0F;
+    }
+
     const MoveList moves = all_possible_moves(state);
     if (moves.empty()) {
       return 0.0F;
     }
+
     return 0.5F;
   }
 
@@ -672,85 +684,19 @@ class MCTS {
   std::vector<MCTSNode> pool;
 };
 
-// ── Root Parallelism ────────────────────────────────────────────────────
-
-/**
- * @brief Tallies majority votes from parallel MCTS results.
- * @tparam N Number of results.
- * @param results Array of move IDs from each thread.
- * @return Move ID with the most votes.
- */
-template <usize N>
-[[nodiscard]] inline int tally_votes(const std::array<int, N>& results) {
-  std::array<int, TOTAL_MOVE_COUNT> votes{};
-  for (usize voteIdx = 0; voteIdx < N; ++voteIdx) {
-    int move = results[voteIdx];
-    if (move >= 0 && move < TOTAL_MOVE_COUNT) {
-      votes[static_cast<usize>(move)]++;
-    }
-  }
-
-  int bestMove = results[0];
-  int bestVotes = 0;
-  for (int i = 0; i < TOTAL_MOVE_COUNT; ++i) {
-    if (votes[static_cast<usize>(i)] > bestVotes) {
-      bestVotes = votes[static_cast<usize>(i)];
-      bestMove = i;
-    }
-  }
-  return bestMove;
-}
-
-/**
- * @brief Runs MCTS with root parallelism via majority voting.
- * @details Spawns NumThreads independent MCTS searches on the same root
- *          position. Each thread runs the full iteration count. The move
- *          receiving the most votes across threads is selected.
- * @tparam RolloutPolicy Rollout policy type.
- * @tparam Iterations Iterations per thread.
- * @tparam NumThreads Number of parallel search threads.
- * @param state Root board state.
- * @return Best move ID by majority vote.
- */
-template <typename RolloutPolicy, int Iterations, int NumThreads>
-[[nodiscard]] inline int mcts_root_parallel(const boardState& state) {
-  static_assert(NumThreads >= 2, "Use mcts_player_maker directly for single-threaded search.");
-
-  std::array<int, NumThreads> results{};
-  std::array<std::thread, NumThreads> threads{};
-
-  for (int threadIdx = 0; threadIdx < NumThreads; ++threadIdx) {
-    threads[static_cast<usize>(threadIdx)] = std::thread([&state, &results, threadIdx]() {
-      MCTS<RolloutPolicy> solver(Iterations);
-      results[static_cast<usize>(threadIdx)] = solver.select_move(state);
-    });
-  }
-
-  for (auto& thr : threads) {
-    thr.join();
-  }
-
-  return tally_votes(results);
-}
-
 // ── Player Maker ────────────────────────────────────────────────────────
 
 /**
  * @brief Player maker function template for MCTS players.
  * @tparam RolloutPolicy Policy type for rollout simulation.
  * @tparam Iterations Number of MCTS iterations per search.
- * @tparam NumThreads Number of parallel threads (1 = sequential, default).
- * @param state Current board state.
+ * * @param state Current board state.
  * @return Selected move ID.
  */
-template <typename RolloutPolicy, int Iterations = 800, int NumThreads = 1>
+template <typename RolloutPolicy, int Iterations = 800>
 [[nodiscard]] inline int mcts_player_maker(const boardState& state) {
-  if constexpr (NumThreads <= 1) {
-    thread_local MCTS<RolloutPolicy> solver(Iterations);
-    return solver.select_move(state);
-  } else {
-    return mcts_root_parallel<RolloutPolicy, Iterations, NumThreads>(state);
-  }
+  thread_local MCTS<RolloutPolicy> solver(Iterations);
+  return solver.select_move(state);
 }
 
 }  // namespace kribu::player

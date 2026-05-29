@@ -4,9 +4,10 @@
  */
 
 #include <catch2/catch_test_macros.hpp>
-#include <kribu/benchmark.hpp>
 #include <kribu/player/random.hpp>
 #include <vector>
+
+#include "../benchmark/benchmark.hpp"
 
 using namespace kribu::benchmark;
 

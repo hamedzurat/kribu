@@ -9,14 +9,13 @@
 #include <kribu/player/minimax.hpp>
 #include <kribu/rules.hpp>
 #include <kribu/transposition_table.hpp>
-#include <kribu/types.hpp>
 
 using namespace kribu::board;
 using namespace kribu::player;
 
 TEST_CASE("Minimax Initial State Evaluation", "[minimax]") {
   boardState state = INITIAL_STATE;
-  REQUIRE(kribu::heuristics::evaluate_by_node_values<kribu::heuristics::HEURISTIC_NODE_WEIGHTS>(state) == -1135);
+  REQUIRE(kribu::heuristics::evaluate(state, 2) == 0);
 }
 
 TEST_CASE("Minimax Terminal State Evaluation", "[minimax]") {
@@ -63,17 +62,14 @@ TEST_CASE("Iterative Deepening Finds Winning Move", "[minimax]") {
 
   // Iterative deepening at depth 3 should still find the winning capture
   kribu::TranspositionTable transpositionTable(1048576);
-  MinimaxResult res = minimax<kribu::heuristics::evaluate_by_node_values<kribu::heuristics::HEURISTIC_NODE_WEIGHTS>>(
-      state, 3, -INFINITY_VAL, INFINITY_VAL, &transpositionTable);
+  MinimaxResult res = minimax(state, 3, -INFINITY_VAL, INFINITY_VAL, &transpositionTable);
   REQUIRE(res.moveId == winMoveId);
   REQUIRE(res.score >= INFINITY_VAL);
 }
 
 TEST_CASE("Player Maker Interface", "[minimax]") {
   boardState state = INITIAL_STATE;
-  int moveId =
-      minimax_player_maker<kribu::heuristics::evaluate_by_node_values<kribu::heuristics::HEURISTIC_NODE_WEIGHTS>, 2>(
-          state);
+  int moveId = minimax_player_maker<2>(state);
   REQUIRE(moveId != -1);
   REQUIRE(kribu::sholoGuti::is_valid(state, moveId));
 }

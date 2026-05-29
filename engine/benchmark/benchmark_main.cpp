@@ -9,13 +9,12 @@
 #include <parquet/arrow/writer.h>
 #include <parquet/exception.h>
 #include <parquet/properties.h>
-#include <sys/ioctl.h>
 #include <sys/sysinfo.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -23,11 +22,12 @@
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/canvas.hpp>
 #include <ftxui/dom/elements.hpp>
-#include <ftxui/screen/terminal.hpp>
+#include <ftxui/screen/color.hpp>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <tabulate/color.hpp>
@@ -35,12 +35,13 @@
 #include <tabulate/font_style.hpp>
 #include <tabulate/table.hpp>
 #include <thread>
+#include <utility>
 #include <vector>
 
+#include "benchmark.hpp"
 #include "config.hpp"
-#include "kribu/benchmark.hpp"
-#include "kribu/rules.hpp"
-#include "players.hpp"
+#include "kribu/types.hpp"
+#include "players.hpp"  // NOLINT(misc-include-cleaner)
 
 using namespace kribu::board;
 using namespace kribu::sholoGuti;
@@ -70,15 +71,22 @@ CpuTimes get_cpu_times() {
   std::ifstream file("/proc/stat");
   std::string line;
   if (std::getline(file, line)) {
-    std::istringstream ss(line);
+    std::istringstream ssInput(line);
     std::string cpu;
-    ss >> cpu;
+    ssInput >> cpu;
     if (cpu == "cpu") {
-      unsigned long long user, nice, system, idle, iowait, irq, softirq, steal;
-      if (ss >> user >> nice >> system >> idle >> iowait >> irq >> softirq >> steal) {
+      unsigned long long cpuUser{0};
+      unsigned long long cpuNice{0};
+      unsigned long long cpuSystem{0};
+      unsigned long long cpuIdle{0};
+      unsigned long long cpuIowait{0};
+      unsigned long long cpuIrq{0};
+      unsigned long long cpuSoftirq{0};
+      unsigned long long cpuSteal{0};
+      if (ssInput >> cpuUser >> cpuNice >> cpuSystem >> cpuIdle >> cpuIowait >> cpuIrq >> cpuSoftirq >> cpuSteal) {
         CpuTimes times;
-        times.idle = idle + iowait;
-        times.total = user + nice + system + idle + iowait + irq + softirq + steal;
+        times.idle = cpuIdle + cpuIowait;
+        times.total = cpuUser + cpuNice + cpuSystem + cpuIdle + cpuIowait + cpuIrq + cpuSoftirq + cpuSteal;
         return times;
       }
     }
@@ -98,7 +106,7 @@ double calculate_cpu_usage(const CpuTimes& prev, const CpuTimes& curr) {
   if (totalDiff == 0) {
     return 0.0;
   }
-  return static_cast<double>(totalDiff - idleDiff) / totalDiff;
+  return static_cast<double>(totalDiff - idleDiff) / static_cast<double>(totalDiff);
 }
 
 /**
@@ -106,8 +114,8 @@ double calculate_cpu_usage(const CpuTimes& prev, const CpuTimes& curr) {
  * @return RAM usage fraction (0.0 to 1.0).
  */
 double get_ram_usage_fraction() {
-  struct sysinfo info;
-  if (sysinfo(&info) == 0) {
+  struct sysinfo info{};      // NOLINT(misc-include-cleaner)
+  if (sysinfo(&info) == 0) {  // NOLINT(misc-include-cleaner)
     double total = static_cast<double>(info.totalram) * info.mem_unit;
     double freeMem = static_cast<double>(info.freeram) * info.mem_unit;
     double buffered = static_cast<double>(info.bufferram) * info.mem_unit;
@@ -125,36 +133,41 @@ double get_ram_usage_fraction() {
  * @param color Color of the graph line.
  * @return FTXUI Element containing the graph.
  */
-ftxui::Element draw_graph(const std::vector<double>& history, int width, int height, ftxui::Color color) {
+ftxui::Element draw_graph(const std::vector<double>& history,
+                          int width,
+                          int height,
+                          ftxui::Color color) {  // NOLINT(misc-include-cleaner)
   using namespace ftxui;
-  Canvas c(width, height);
+  Canvas graphCanvas(width, height);
 
   int ptWidth = width * 2;
   int ptHeight = height * 4;
 
   // Draw background grid lines (subtle dashed horizontal lines)
-  for (int y = ptHeight / 4; y < ptHeight; y += ptHeight / 4) {
-    for (int x = 0; x < ptWidth; x += 4) {
-      c.DrawPoint(x, y, true, Color::GrayDark);
+  for (int yCoord = ptHeight / 4; yCoord < ptHeight; yCoord += ptHeight / 4) {
+    for (int xCoord = 0; xCoord < ptWidth; xCoord += 4) {
+      graphCanvas.DrawPoint(xCoord, yCoord, true, Color::GrayDark);
     }
   }
 
   // Draw the history plot line
-  for (size_t i = 1; i < history.size(); ++i) {
-    int x1 = static_cast<int>((i - 1) * static_cast<double>(ptWidth) / history.size());
-    int y1 = ptHeight - 1 - static_cast<int>(history[i - 1] * (ptHeight - 1));
-    int x2 = static_cast<int>(i * static_cast<double>(ptWidth) / history.size());
-    int y2 = ptHeight - 1 - static_cast<int>(history[i] * (ptHeight - 1));
+  for (size_t i = 1; i < history.size(); ++i) {  // NOLINT(misc-include-cleaner)
+    int xPos1 = static_cast<int>(static_cast<double>(i - 1) * static_cast<double>(ptWidth)
+                                 / static_cast<double>(history.size()));
+    int yPos1 = ptHeight - 1 - static_cast<int>(history[i - 1] * (ptHeight - 1));
+    int xPos2 =
+        static_cast<int>(static_cast<double>(i) * static_cast<double>(ptWidth) / static_cast<double>(history.size()));
+    int yPos2 = ptHeight - 1 - static_cast<int>(history[i] * (ptHeight - 1));
 
-    x1 = std::max(0, std::min(x1, ptWidth - 1));
-    y1 = std::max(0, std::min(y1, ptHeight - 1));
-    x2 = std::max(0, std::min(x2, ptWidth - 1));
-    y2 = std::max(0, std::min(y2, ptHeight - 1));
+    xPos1 = std::max(0, std::min(xPos1, ptWidth - 1));
+    yPos1 = std::max(0, std::min(yPos1, ptHeight - 1));
+    xPos2 = std::max(0, std::min(xPos2, ptWidth - 1));
+    yPos2 = std::max(0, std::min(yPos2, ptHeight - 1));
 
-    c.DrawPointLine(x1, y1, x2, y2, color);
+    graphCanvas.DrawPointLine(xPos1, yPos1, xPos2, yPos2, color);
   }
 
-  return canvas(std::move(c));
+  return canvas(std::move(graphCanvas));
 }
 
 /**
@@ -427,10 +440,11 @@ ftxui::Element render_matchup_row(const MatchupState& match, int index, bool isA
 ftxui::Element render_active_panel(const MatchupState& match) {
   using namespace ftxui;
   int completed = match.completedGames.load();
-  float progress = (match.games > 0) ? static_cast<float>(completed) / match.games : 0.0F;
+  float progress = (match.games > 0) ? static_cast<float>(completed) / static_cast<float>(match.games) : 0.0F;
 
   auto now = std::chrono::high_resolution_clock::now();
-  double elapsedSecs = std::chrono::duration<double>(now - match.startTime).count();
+  double elapsedSecs{0.0};
+  elapsedSecs = std::chrono::duration<double>(now - match.startTime).count();
   double etaSecs = 0.0;
   if (completed > 0 && completed < match.games) {
     etaSecs = (elapsedSecs / completed) * (match.games - completed);
@@ -477,7 +491,7 @@ ftxui::Element render_active_panel(const MatchupState& match) {
  * @param outcome The result and win reason of the game.
  * @param history The sequence of moves played during the game.
  */
-void save_game_parquet(std::string_view player1Name,
+void save_game_parquet(std::string_view player1Name,  // NOLINT(misc-use-internal-linkage)
                        std::string_view player2Name,
                        int gameId,
                        const GameOutcome& outcome,
@@ -532,11 +546,9 @@ void save_game_parquet(std::string_view player1Name,
  * @brief Main entrypoint running the compile-time matchup tournament.
  * @return 0 on success, non-zero on error.
  */
-int main() {
+int main() {  // NOLINT(readability-function-cognitive-complexity)
   using namespace ftxui;
 
-  kribu::maxRepetitions = kribu::benchmark::REPETITION_LIMIT;
-  kribu::allowRepetition = kribu::benchmark::ALLOW_REPETITION;
   try {
     std::filesystem::create_directories("benchmark");
 
@@ -589,11 +601,11 @@ int main() {
 
     // background runner thread
     std::thread tournamentThread([&]() {
-      for (size_t i = 0; i < matchupsList.size(); ++i) {
+      for (const auto& matchPtr : matchupsList) {
         if (abortRequested.load(std::memory_order_relaxed)) {
           break;
         }
-        auto& match = *matchupsList[i];
+        auto& match = *matchPtr;
         if (!match.registered) {
           continue;
         }
@@ -665,20 +677,20 @@ int main() {
 
       for (size_t i = 0; i < matchupsList.size(); ++i) {
         listElements.push_back(
-            render_matchup_row(*matchupsList[i], static_cast<int>(i), static_cast<int>(i) == activeIndex));
+            render_matchup_row(*matchupsList[i], static_cast<int>(i), std::cmp_equal(i, activeIndex)));
       }
 
       Element activePanel = border(center(text("No active matchup"))) | flex;
       if (activeIndex != -1) {
         activePanel = render_active_panel(*matchupsList[activeIndex]);
-      } else if (completedCount == static_cast<int>(matchupsList.size())) {
+      } else if (std::cmp_equal(completedCount, matchupsList.size())) {
         activePanel = border(vbox({center(bold(text("TOURNAMENT COMPLETED!"))) | color(Color::Green),
                                    center(text("Finalizing summary table...")) | color(Color::GrayLight),
                                    filler()}))
                       | color(Color::Green) | flex;
       }
 
-      float overallProgress = static_cast<float>(completedCount) / matchupsList.size();
+      float overallProgress = static_cast<float>(completedCount) / static_cast<float>(matchupsList.size());
       auto overallGauge = gauge(overallProgress) | color(Color::Green);
       std::string overallText =
           std::to_string(completedCount) + "/" + std::to_string(matchupsList.size()) + " matchups done";
@@ -722,7 +734,7 @@ int main() {
     });
 
     int qPressCount = 0;
-    auto component = renderer | CatchEvent([&](Event event) {
+    auto component = renderer | CatchEvent([&](const Event& event) {
                        if (event.is_character() && event.character() == "q") {
                          qPressCount++;
                          if (qPressCount >= 2) {
@@ -747,10 +759,10 @@ int main() {
 
         double ramUsage = get_ram_usage_fraction();
 
-        std::rotate(cpuHistory.begin(), cpuHistory.begin() + 1, cpuHistory.end());
+        std::ranges::rotate(cpuHistory, cpuHistory.begin() + 1);
         cpuHistory.back() = cpuUsage;
 
-        std::rotate(ramHistory.begin(), ramHistory.begin() + 1, ramHistory.end());
+        std::ranges::rotate(ramHistory, ramHistory.begin() + 1);
         ramHistory.back() = ramUsage;
 
         screen.PostEvent(Event::Custom);

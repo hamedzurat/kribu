@@ -36,6 +36,8 @@ add_executable(
   tests/test_fast_rng.cpp tests/test_benchmark.cpp)
 target_link_libraries(kribu_engine_tests PRIVATE kribu_engine
                                                  Catch2::Catch2WithMain)
+target_include_directories(kribu_engine_tests
+                           PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/benchmark)
 
 # Include Catch2 test discovery so ctest can find them
 list(APPEND CMAKE_MODULE_PATH ${Catch2_SOURCE_DIR}/extras)

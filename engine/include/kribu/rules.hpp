@@ -13,23 +13,13 @@
 #include <eve/module/core.hpp>
 #include <stdexcept>
 #include <type_traits>
-#include <vector>
 
 #include "board.hpp"
 #include "types.hpp"
 #include "zobrist.hpp"
 
 namespace kribu {
-/**
- * @brief Thread-local configuration for maximum allowed repetitions before a draw is declared.
- */
-inline int maxRepetitions = 4;
-inline bool allowRepetition = true;
-
-/**
- * @brief Thread-local record of Zobrist hashes in the current game to detect repetitions.
- */
-inline thread_local std::vector<u64> currentGameHistory;
+// Thread-local configurations and game history moved or removed to avoid process-wide globals.
 }  // namespace kribu
 
 /**
@@ -123,10 +113,7 @@ struct MoveList {
  * @param mask Bitmask representing player pieces.
  * @return Count of set bits (pieces).
  */
-[[nodiscard]] constexpr i32 piece_count(u64 mask) noexcept {
-  if (std::is_constant_evaluated()) {
-    return static_cast<i32>(std::popcount(mask));
-  }
+[[nodiscard]] inline i32 piece_count(u64 mask) noexcept {
   return static_cast<i32>(eve::popcount(mask));
 }
 
@@ -387,11 +374,15 @@ struct MoveList {
   if (piece_count(state.me) == 0) {
     return GameStatus::OPP_WINS_ELIMINATION;
   }
+
+  if (state.activeCaptureIdx != -1) {
+    return GameStatus::ONGOING;
+  }
+
   if (all_possible_moves(state).empty()) {
     return GameStatus::OPP_WINS_STALEMATE;
   }
-  boardState flipped = flip_board(state);
-  if (all_possible_moves(flipped).empty()) {
+  if (all_possible_moves(flip_board(state)).empty()) {
     return GameStatus::ME_WINS_STALEMATE;
   }
   return GameStatus::ONGOING;

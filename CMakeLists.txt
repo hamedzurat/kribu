@@ -22,7 +22,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     -Wno-c2y-extensions
     -O3
     -march=native
-    -mtune=native)
+    -mtune=native
+    -flto
+    -fomit-frame-pointer)
+  add_link_options(-flto)
 endif()
 
 # Setup CPM

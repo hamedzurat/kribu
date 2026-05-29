@@ -12,10 +12,11 @@
 #include <thread>
 #include <vector>
 
-#include "board.hpp"
+#include "config.hpp"
+#include "kribu/board.hpp"
 #include "kribu/player/random.hpp"
-#include "rules.hpp"
-#include "types.hpp"
+#include "kribu/rules.hpp"
+#include "kribu/types.hpp"
 
 namespace kribu::benchmark {
 
@@ -32,13 +33,6 @@ struct TurnRecord {
   int chosenMove = -1;
   MoveList possibleMoves;
   std::string_view playerPlayed;
-};
-
-struct MatchConfig {
-  std::string_view player1Name;
-  std::string_view player2Name;
-  int games;
-  int maxTurns;
 };
 
 /**
@@ -221,7 +215,8 @@ inline int execute_move(boardState& state,
     moveId = get_player_move(player1, player2, isP1Turn, state, isMadMove);
   }
   auto endTime = std::chrono::high_resolution_clock::now();
-  f64 elapsed = std::chrono::duration<f64>(endTime - startTime).count();
+  f64 elapsed{0.0};
+  elapsed = std::chrono::duration<f64>(endTime - startTime).count();
 
   update_perf_stats(perf, isP1Turn, elapsed);
 
@@ -236,12 +231,9 @@ inline int execute_move(boardState& state,
 /**
  * @brief Helper to count the occurrences of a board state hash in game history.
  */
-inline int count_repetitions(u64 hash) noexcept {
-  if (maxRepetitions <= 0) {
-    return 0;
-  }
+inline int count_repetitions(u64 hash, const std::vector<u64>& gameHistoryHashes) noexcept {
   int repetitions = 0;
-  for (u64 prevHash : currentGameHistory) {
+  for (u64 prevHash : gameHistoryHashes) {
     if (prevHash == hash) {
       repetitions++;
     }
@@ -252,10 +244,8 @@ inline int count_repetitions(u64 hash) noexcept {
 /**
  * @brief Helper to record history hash.
  */
-inline void record_history_hash(u64 hash) noexcept {
-  if (maxRepetitions > 0) {
-    currentGameHistory.push_back(hash);
-  }
+inline void record_history_hash(u64 hash, std::vector<u64>& gameHistoryHashes) noexcept {
+  gameHistoryHashes.push_back(hash);
 }
 
 /**
@@ -320,29 +310,34 @@ constexpr int calculate_forced_random_turns(int repetitions) noexcept {
  * @return True if the limit is reached, false otherwise.
  */
 inline bool is_repetition_limit_reached(int repetitions) noexcept {
-  return repetitions >= maxRepetitions - 1;
+  return repetitions >= REPETITION_LIMIT - 1;
 }
 
 /**
  * @brief Handles the repetition limits and sets consecutive random turns if repetition occurs.
  * @param state The current board state.
+ * @param gameHistoryHashes Record of Zobrist hashes in the current game.
  * @param forcedRandomTurnsLeft Reference to the counter of forced random turns.
  * @param outcome Reference to the GameOutcome to set in case of repetition limit.
  * @return True if repetition limit was reached and the game should end, false otherwise.
  */
-inline bool handle_repetition(const boardState& state, i32& forcedRandomTurnsLeft, GameOutcome& outcome) noexcept {
-  const i32 repetitions = count_repetitions(state.hash);
+inline bool handle_repetition(const boardState& state,
+                              std::vector<u64>& gameHistoryHashes,
+                              i32& forcedRandomTurnsLeft,
+                              GameOutcome& outcome) noexcept {
+  i32 repetitions{0};
+  repetitions = count_repetitions(state.hash, gameHistoryHashes);
   if (is_repetition_limit_reached(repetitions)) {
-    if (!allowRepetition) {
+    if (!ALLOW_REPETITION) {
       outcome = GameOutcome{.result = GameResult::DRAW, .reason = WinReason::REPETITION};
       return true;
     }
   }
 
-  if (repetitions >= 2 && allowRepetition) {
+  if (repetitions >= 2 && ALLOW_REPETITION) {
     forcedRandomTurnsLeft = std::max(forcedRandomTurnsLeft, calculate_forced_random_turns(repetitions));
   }
-  record_history_hash(state.hash);
+  record_history_hash(state.hash, gameHistoryHashes);
   return false;
 }
 
@@ -387,6 +382,9 @@ inline bool play_single_turn(boardState& state,
     forcedRandomTurnsCount++;
   }
 
+  const bool playerWasP1 = isP1Turn;
+  const std::string_view playerNameBeforeMove = playerWasP1 ? player1.name : player2.name;
+
   bool isMadMove = false;
   const i32 moveId = execute_move(state, isP1Turn, player1, player2, perf, forceRandom, isMadMove);
   if (moveId == -1) {
@@ -401,7 +399,7 @@ inline bool play_single_turn(boardState& state,
   } else if (isMadMove) {
     record.playerPlayed = "MadPlayer";
   } else {
-    record.playerPlayed = isP1Turn ? player1.name : player2.name;
+    record.playerPlayed = playerNameBeforeMove;
   }
   history.push_back(record);
   return false;
@@ -429,14 +427,15 @@ inline GameOutcome play_single_game(const Player& player1,
   i32 forcedRandomTurnsLeft = 0;
   i32 forcedRandomTurnsCount = 0;
 
-  currentGameHistory.clear();
+  std::vector<u64> gameHistoryHashes;
+  gameHistoryHashes.reserve(static_cast<usize>(maxTurns));
 
   history.clear();
   history.reserve(static_cast<usize>(maxTurns));
 
   while (turnCount < maxTurns) {
     GameOutcome outcome;
-    if (handle_repetition(state, forcedRandomTurnsLeft, outcome)) {
+    if (handle_repetition(state, gameHistoryHashes, forcedRandomTurnsLeft, outcome)) {
       outcome.forcedRandomTurns = forcedRandomTurnsCount;
       return outcome;
     }
@@ -456,14 +455,14 @@ inline GameOutcome play_single_game(const Player& player1,
 /**
  * @brief Runs a tournament matchup between two players in a multithreaded fashion.
  */
-inline MatchStats run_matchup_multithreaded(const Player& player1,
+inline MatchStats run_matchup_multithreaded(const Player& player1,  // NOLINT(readability-function-cognitive-complexity)
                                             const Player& player2,
                                             const TournamentConfig& config) {
   MatchStats stats{.player1Name = player1.name, .player2Name = player2.name};
   std::atomic<int> nextGameIdx{0};
   std::mutex statsMutex;
 
-  auto worker = [&]() {
+  auto worker = [&]() {  // NOLINT(readability-function-cognitive-complexity)
     LocalWins localP1;
     LocalWins localP2;
     int localDraws = 0;
