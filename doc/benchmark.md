@@ -10,12 +10,12 @@ The framework uses the following structures to define configuration, players, an
 
 ### 1. Match Configurations and Results
 
-| Structure          | Purpose                                                    | Key Attributes                                                                                                                                                               |
-| :----------------- | :--------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Player`           | Abstract representation of an AI player in the tournament. | `name` (string view), `select` (function pointer to select move), `madness` (random play injection probability).                                                             |
-| `MatchConfig`      | Specifications of a scheduled matchup.                     | `player1Name`, `player2Name`, `games` (match count), `maxTurns` (limit per game).                                                                                            |
-| `GameOutcome`      | Result of a single completed game.                         | `result` (P1/P2/Draw), `reason` (Elimination, Stalemate, Invalid Move, Max Turns, Repetition), `winMargin` (piece count difference), `forcedRandomTurns` (counter of loops). |
-| `TournamentConfig` | Global parameters for executing matchups in parallel.      | `totalGames`, `maxTurns`, `threadCount`, and thread-safe atomics for tracking tournament progression and score.                                                              |
+| Structure          | Purpose                                                    | Key Attributes                                                                                                                       |
+| :----------------- | :--------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------- |
+| `Player`           | Abstract representation of an AI player in the tournament. | `name` (string view), `select` (function pointer to select move), `madness` (random play injection probability).                     |
+| `MatchConfig`      | Specifications of a scheduled matchup.                     | `player1Name`, `player2Name`, `games` (match count), `maxTurns` (limit per game).                                                    |
+| `GameOutcome`      | Result of a single completed game.                         | `result` (P1/P2/Draw), `reason` (Elimination, Stalemate, Invalid Move, Max Turns, Repetition), `winMargin` (piece count difference). |
+| `TournamentConfig` | Global parameters for executing matchups in parallel.      | `totalGames`, `maxTurns`, `threadCount`, and thread-safe atomics for tracking tournament progression and score.                      |
 
 ### 2. Performance Tracking
 
@@ -46,8 +46,8 @@ flowchart TD
     Apply --> LoopTurn
     LoopTurn -- No (Draw) --> FinishGame["Record outcome & telemetry"]
     PlayTurn -- "Invalid Move / Game Over" --> FinishGame
-    FinishGame --> Parquet["save_game_parquet (serialize dataset)"]
-    Parquet --> Worker
+    FinishGame --> DB["save_game (write to DuckDB dataset)"]
+    DB --> Worker
     Worker -- "Tournament Done" --> Join["Join threads & aggregate stats"]
     Join --> End([Return MatchStats])
 ```
@@ -80,4 +80,4 @@ ______________________________________________________________________
 Every completed game's history is archived for offline analysis and machine learning training:
 
 - **`TurnRecord`**: Stores the exact state before a move, whose turn it is, the chosen move ID, the list of all legal moves, and which agent (or forced random system) played the turn.
-- **`save_game_parquet`**: Implemented using **Apache Arrow**, this function serializes the collection of `TurnRecord`s for a finished game directly to a Parquet file.
+- **`save_game`**: Implemented using **DuckDB**, this function serializes the completed game details and the collection of `TurnRecord`s for a finished game directly to the DuckDB database.

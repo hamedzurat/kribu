@@ -37,10 +37,10 @@ If the selected leaf node is not terminal, the engine expands a new child node:
 
 A simulation playout is run from the expanded node's state until a game outcome is reached or the step limit is exceeded.
 
-- **Epsilon-Greedy Policy**: In each step, the rollout policy chooses the best move according to `EvalFunc` with probability $1 - \\varepsilon$ (where $\\varepsilon = 0.3$), or a completely random move with probability $\\varepsilon$. This balances playout realism with variety.
+- **Deterministic Reply-Aware Policy**: In each step, the rollout policy chooses the best move using `Rollout::select_move()`. This policy ranks candidate moves using static evaluation and runs lookahead checks to find the opponent's best immediate response, preventing the rollout from choosing moves with devastating replies.
 - **Fast Terminal Check**: To maximize simulation speed, rollouts skip expensive stalemate detection and check only for piece elimination (`piece_count == 0`).
 - **Tanh Normalization**: If the step limit (60 steps) is reached, the static evaluation of the final state is mapped to a $[0, 1]$ win probability using a hyperbolic tangent function:
-  $$\\text{Value} = 0.5 + 0.5 \\times \\tanh\\left(\\frac{\\text{Heuristic Score}}{50.0}\\right)$$
+  $$\\text{Value} = 0.5 + 0.5 \\times \\tanh\\left(\\frac{\\text{Heuristic Score}}{3000.0}\\right)$$
 
 ### 4. Backpropagation
 
@@ -50,13 +50,7 @@ ______________________________________________________________________
 
 ## Parallelism & Termination Optimizations
 
-### Root Parallelism
-
-When configured with multiple threads (`NumThreads >= 2`), the engine uses **Root Parallelism**:
-
-- It spawns independent MCTS search trees on separate threads.
-- Each thread runs the full iteration budget.
-- Once finished, the player tallies the recommended moves from all threads and selects the one with the majority vote (`tally_votes`).
+MCTS runs as a single-threaded search algorithm. However, the benchmarking tournament executes multiple independent games in parallel using worker threads.
 
 ### Early Termination
 
@@ -83,7 +77,7 @@ flowchart TD
     EvalTerminal --> Backpropagate
 
     Terminal -- No --> Expand[2. Expansion: Expand one child node<br/>O1 index, captures first]
-    Expand --> Simulate[3. Simulation: Run epsilon-greedy rollout<br/>Fast piece-elimination & Tanh evaluation]
+    Expand --> Simulate[3. Simulation: Run deterministic rollout<br/>Fast piece-elimination & Tanh evaluation]
     Simulate --> Backpropagate[4. Backpropagation: Update visits and values up to root]
 
     Backpropagate --> EarlyCheck{Iter % 50 == 0?}

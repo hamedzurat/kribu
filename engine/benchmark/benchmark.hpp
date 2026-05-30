@@ -28,9 +28,24 @@ using namespace kribu::sholoGuti;
  * @brief Records the state and decision of a single turn/ply for Parquet serialization.
  */
 struct TurnRecord {
+  /**
+   * @brief The board state at this turn.
+   */
   boardState state;
+
+  /**
+   * @brief True if it was Player 1's turn, false if Player 2's turn.
+   */
   bool isP1Turn = false;
+
+  /**
+   * @brief The move ID chosen in this state.
+   */
   int chosenMove = -1;
+
+  /**
+   * @brief Name of the player or special system (e.g. ForcedRandom, MadPlayer) that played this turn.
+   */
   std::string_view playerPlayed;
 };
 
@@ -51,8 +66,19 @@ enum class WinReason : u8 { ELIMINATION, STALEMATE, INVALID_MOVE, DRAW_MAX_TURNS
  * @brief Bundles game result and the reason.
  */
 struct GameOutcome {
+  /**
+   * @brief The result of the match.
+   */
   GameResult result;
+
+  /**
+   * @brief The reason the game ended.
+   */
   WinReason reason;
+
+  /**
+   * @brief Win margin represented by the difference in piece counts.
+   */
   int winMargin = 0;
 };
 
@@ -61,10 +87,29 @@ struct GameOutcome {
  * @brief Abstract representation of an AI player in the tournament.
  */
 struct Player {
+  /**
+   * @brief The category/type of player (e.g. random, greedy, minimax, mcts).
+   */
   std::string_view type = "unknown";
+
+  /**
+   * @brief Unique name of the player.
+   */
   std::string_view name;
+
+  /**
+   * @brief Function pointer to the player's move selection method.
+   */
   int (*select)(const boardState&) = nullptr;
+
+  /**
+   * @brief Search depth or iteration budget of the player.
+   */
   int depth = 0;
+
+  /**
+   * @brief Percentage probability of random play injection (madness mode).
+   */
   int madness = 0;
 };
 
@@ -73,19 +118,74 @@ struct Player {
  * @brief Aggregate statistics from a matchup between two players.
  */
 struct MatchStats {
+  /**
+   * @brief Name of Player 1.
+   */
   std::string_view player1Name;
+
+  /**
+   * @brief Name of Player 2.
+   */
   std::string_view player2Name;
+
+  /**
+   * @brief Number of Player 1 wins.
+   */
   int p1Wins = 0;
+
+  /**
+   * @brief Number of Player 2 wins.
+   */
   int p2Wins = 0;
+
+  /**
+   * @brief Number of drawn games.
+   */
   int draws = 0;
+
+  /**
+   * @brief Number of elimination victories for Player 1.
+   */
   int p1EliminationWins = 0;
+
+  /**
+   * @brief Number of stalemate victories for Player 1.
+   */
   int p1StalemateWins = 0;
+
+  /**
+   * @brief Number of invalid move (disqualification) victories for Player 1.
+   */
   int p1InvalidMoveWins = 0;
+
+  /**
+   * @brief Number of elimination victories for Player 2.
+   */
   int p2EliminationWins = 0;
+
+  /**
+   * @brief Number of stalemate victories for Player 2.
+   */
   int p2StalemateWins = 0;
+
+  /**
+   * @brief Number of invalid move (disqualification) victories for Player 2.
+   */
   int p2InvalidMoveWins = 0;
+
+  /**
+   * @brief Accumulated CPU time (seconds) consumed by Player 1 across all games.
+   */
   f64 p1TotalCpuTimeSeconds = 0.0;
+
+  /**
+   * @brief Accumulated CPU time (seconds) consumed by Player 2 across all games.
+   */
   f64 p2TotalCpuTimeSeconds = 0.0;
+
+  /**
+   * @brief Total number of turns (plies) played in this matchup.
+   */
   u64 totalTurns = 0;
 };
 
@@ -94,6 +194,9 @@ struct MatchStats {
  * @brief Performance telemetry for a player during a game.
  */
 struct PlayerPerformance {
+  /**
+   * @brief Accumulated CPU decision time (seconds) in a single game.
+   */
   f64 cpuTimeSeconds = 0.0;
 };
 
@@ -102,7 +205,14 @@ struct PlayerPerformance {
  * @brief Performance metrics for both players in a single match.
  */
 struct GamePerf {
+  /**
+   * @brief Performance telemetry for Player 1.
+   */
   PlayerPerformance p1;
+
+  /**
+   * @brief Performance telemetry for Player 2.
+   */
   PlayerPerformance p2;
 };
 
@@ -111,14 +221,49 @@ struct GamePerf {
  * @brief Parameters configuring a matchup tournament.
  */
 struct TournamentConfig {
+  /**
+   * @brief Total number of games scheduled in this tournament.
+   */
   int totalGames = 0;
+
+  /**
+   * @brief Maximum turns (plies) allowed before drawing a game.
+   */
   int maxTurns = 1000;
+
+  /**
+   * @brief Thread count for parallel execution of games.
+   */
   int threadCount = 0;
+
+  /**
+   * @brief Pointer to atomic counter tracking completed games.
+   */
   std::atomic<int>* completedGames = nullptr;
+
+  /**
+   * @brief Pointer to atomic counter providing unique global game IDs.
+   */
   std::atomic<int>* globalGameId = nullptr;
+
+  /**
+   * @brief Pointer to atomic counter tracking Player 1 wins.
+   */
   std::atomic<int>* p1Wins = nullptr;
+
+  /**
+   * @brief Pointer to atomic counter tracking Player 2 wins.
+   */
   std::atomic<int>* p2Wins = nullptr;
+
+  /**
+   * @brief Pointer to atomic counter tracking draws.
+   */
   std::atomic<int>* draws = nullptr;
+
+  /**
+   * @brief Pointer to atomic flag signaling abort requests.
+   */
   std::atomic<bool>* abortRequested = nullptr;
 };
 
@@ -136,9 +281,24 @@ void save_game(std::string_view player1Name,
  * @brief Thread-local accumulator for win statistics.
  */
 struct LocalWins {
+  /**
+   * @brief Total wins recorded.
+   */
   int wins = 0;
+
+  /**
+   * @brief Number of elimination wins.
+   */
   int elimination = 0;
+
+  /**
+   * @brief Number of stalemate wins.
+   */
   int stalemate = 0;
+
+  /**
+   * @brief Number of invalid move wins.
+   */
   int invalidMove = 0;
 };
 

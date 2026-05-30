@@ -156,14 +156,37 @@ struct CompletedGame {
   std::vector<TurnRecord> history;
 };
 
+/**
+ * @class GameWriterQueue
+ * @brief Thread-safe blocking queue for completed games waiting to be written to DuckDB.
+ */
 class GameWriterQueue {
  private:
+  /**
+   * @brief Internal queue storing completed games.
+   */
   std::queue<CompletedGame> queue_;
+
+  /**
+   * @brief Mutex protecting queue access.
+   */
   std::mutex mutex_;
+
+  /**
+   * @brief Condition variable for consumer blocking.
+   */
   std::condition_variable cv_;
+
+  /**
+   * @brief Flag indicating the tournament is completed and no more games will be pushed.
+   */
   bool done_ = false;
 
  public:
+  /**
+   * @brief Pushes a completed game into the queue and notifies the consumer.
+   * @param game Rvalue reference of the completed game.
+   */
   void push(CompletedGame&& game) {
     {
       std::scoped_lock lock(mutex_);
@@ -172,6 +195,11 @@ class GameWriterQueue {
     cv_.notify_one();
   }
 
+  /**
+   * @brief Pops a completed game from the queue, blocking if empty until notified or done.
+   * @param game Output reference where the popped game will be stored.
+   * @return True if a game was popped successfully, false if the queue is empty and done.
+   */
   bool pop(CompletedGame& game) {
     std::unique_lock<std::mutex> lock(mutex_);
     cv_.wait(lock, [this] { return !queue_.empty() || done_; });
@@ -183,6 +211,9 @@ class GameWriterQueue {
     return true;
   }
 
+  /**
+   * @brief Signals that no more games will be pushed, waking up any blocked pop callers.
+   */
   void set_done() {
     {
       std::scoped_lock lock(mutex_);
@@ -193,9 +224,16 @@ class GameWriterQueue {
 };
 
 namespace {
+/**
+ * @brief Global queue instance for DuckDB writing.
+ */
 GameWriterQueue gameQueue;
-}
+}  // namespace
 
+/**
+ * @brief Initializes the DuckDB database schema and creates games, players, and turns tables/views.
+ * @param con Reference to the DuckDB connection.
+ */
 void initialize_duckdb(duckdb::Connection& con) {  // NOLINT(misc-include-cleaner)
   con.Query(
       "CREATE TABLE IF NOT EXISTS players ("
@@ -264,11 +302,22 @@ void initialize_duckdb(duckdb::Connection& con) {  // NOLINT(misc-include-cleane
       "JOIN games g ON t.game_id = g.game_id");
 }
 
+/**
+ * @brief Checks if a game record with a given game ID already exists in the database.
+ * @param con Reference to the DuckDB connection.
+ * @param gameId The game ID to check.
+ * @return True if the game exists, false otherwise.
+ */
 bool game_exists(duckdb::Connection& con, int gameId) {
   auto res = con.Query("SELECT 1 FROM games WHERE game_id = " + std::to_string(gameId));
   return res->RowCount() > 0;
 }
 
+/**
+ * @brief Registers players in the database players table.
+ * @param con Reference to the DuckDB connection.
+ * @param players Map of players to insert.
+ */
 void insert_players(duckdb::Connection& con, const std::map<std::string, Player>& players) {
   con.Query(
       "INSERT INTO players (name, player_type, depth, madness) VALUES ('ForcedRandom', 'forced_random', 0, 0) ON "
@@ -284,6 +333,10 @@ void insert_players(duckdb::Connection& con, const std::map<std::string, Player>
   }
 }
 
+/**
+ * @brief The database writer thread worker function.
+ * @details Dequeues completed games from the GameWriterQueue and writes them to the DuckDB database.
+ */
 void db_writer_thread_func() {
   duckdb::DuckDB duckDb("benchmark/dataset.duckdb");  // NOLINT(misc-include-cleaner)
   duckdb::Connection con(duckDb);                     // NOLINT(misc-include-cleaner)
@@ -353,6 +406,10 @@ void db_writer_thread_func() {
   }
 }
 
+/**
+ * @brief Retrieves the maximum game ID currently stored in the database.
+ * @return The maximum game ID, or 0 if empty or database is uninitialized.
+ */
 int get_max_game_id() {
   try {
     duckdb::DuckDB duckDb("benchmark/dataset.duckdb");  // NOLINT(misc-include-cleaner)

@@ -203,6 +203,11 @@ class MCTS {
    */
   explicit MCTS(int iterations = 800) : maxIterations(iterations) {}
 
+  /**
+   * @brief Selects the best move using MCTS from a given root state.
+   * @param rootState The starting board state.
+   * @return The selected move ID.
+   */
   int select_move(const boardState& rootState) {
     init_tree(rootState);
 
@@ -283,6 +288,9 @@ class MCTS {
     return node;
   }
 
+  /**
+   * @brief Runs a single iteration of the MCTS cycle (selection, expansion, simulation, backpropagation).
+   */
   void run_iteration() {
     int nodeIdx = select_leaf(0);
     f32 val = 0.0F;
@@ -300,6 +308,11 @@ class MCTS {
     backpropagate(nodeIdx, val);
   }
 
+  /**
+   * @brief Checks if the opponent player has no legal moves from the current state.
+   * @param state The current board state.
+   * @return True if the opponent has no legal moves, false otherwise.
+   */
   [[nodiscard]] static bool opponent_has_no_moves(const boardState& state) noexcept {
     const boardState flippedState = flip_board(state);
     return all_possible_moves(flippedState).empty();
@@ -404,6 +417,11 @@ class MCTS {
     return isP1Turn ? val : (1.0F - val);
   }
 
+  /**
+   * @brief Backpropagates simulation results up to the root node.
+   * @param nodeIdx Index of the starting node to backpropagate from.
+   * @param val The simulation value to backpropagate.
+   */
   void backpropagate(int nodeIdx, f32 val) {
     while (nodeIdx != -1) {
       node_at(nodeIdx).visits += 1.0F;

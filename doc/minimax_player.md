@@ -12,15 +12,13 @@ ______________________________________________________________________
 
 The minimax engine implements the following search enhancements:
 
-### 1. Lazy SMP Parallelism
+### 1. Thread-Local Search Context
 
-The player is always configured with multiple threads (`NumThreads >= 2`) and uses **Lazy SMP (Symmetric Multi-Processing)**.
+The minimax player executes single-threaded searches using a thread-local `TranspositionTable` and `SearchContext`.
 
-- It spawns multiple threads, all performing independent search iterations on the same root position.
-- They share a single global **Transposition Table (TT)**.
-- Threads naturally diversify because they read and write to the shared TT at slightly different times, exploring different branches.
-- Odd-indexed threads search slightly different target depths ($\\pm 1$) to further diversify the search.
-- The best move found across all threads is returned.
+- Spawning threads is avoided at the player level to eliminate synchronization overhead.
+- Instead, the matchmaking tournament runs multiple games in parallel across separate threads, each using their own thread-local Transposition Table.
+- This ensures maximum CPU utilization across multiple processor cores without complex concurrency locks inside the player logic.
 
 ### 2. Iterative Deepening & Aspiration Windows
 
@@ -144,9 +142,9 @@ To maximize cache hit rates, the table uses a **depth-preferred replacement sche
 - An entry is overwritten if the new evaluation was performed at a greater remaining depth than the stored depth (`depth >= entry.depth`).
 - This prioritizes keeping deep search results (which are very expensive to compute) over shallow, near-leaf evaluations.
 
-### 5. Shared Parallel Search (Lazy SMP)
+### 5. Thread-Local Cache Safety
 
-The transposition table is shared globally among threads in Lazy SMP. It is designed to be **lock-free** to prevent synchronization bottlenecks. Data race writes to entries are harmless (causing at worst a cache miss or a corrupted entry that fails the 64-bit hash validation check on the next probe).
+Since each thread runs its own game and search thread-locally, the transposition table is completely thread-safe without needing locks or atomics. This design achieves maximum lookup speed and zero lock contention during deep searches.
 
 ______________________________________________________________________
 

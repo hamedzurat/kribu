@@ -23,9 +23,24 @@ inline constexpr int REPETITION_LIMIT = 4;
 inline constexpr bool ALLOW_REPETITION = true;
 
 struct MatchConfig {
+  /**
+   * @brief Name of Player 1.
+   */
   std::string_view player1Name;
+
+  /**
+   * @brief Name of Player 2.
+   */
   std::string_view player2Name;
+
+  /**
+   * @brief Total number of games to play in this matchup.
+   */
   int games;
+
+  /**
+   * @brief Maximum turns (plies) allowed per game.
+   */
   int maxTurns;
 };
 

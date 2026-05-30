@@ -105,10 +105,21 @@ struct OrderedMoveList {
  * @details Used for move ordering: killers are tried after TT move and captures.
  */
 struct KillerTable {
+  /**
+   * @brief Two-dimensional array storing killer move IDs for each depth.
+   */
   std::array<std::array<i16, NUM_KILLER_SLOTS>, MAX_KILLER_DEPTH> slots{};
 
+  /**
+   * @brief Constructs the killer table, initializing all slots to -1.
+   */
   constexpr KillerTable() noexcept { clear(); }
 
+  /**
+   * @brief Stores a killer move at the given depth.
+   * @param depth The current search depth.
+   * @param moveId The ID of the killer move.
+   */
   constexpr void store(int depth, i16 moveId) noexcept {
     if (depth < 0 || depth >= MAX_KILLER_DEPTH) {
       return;
@@ -140,6 +151,9 @@ struct KillerTable {
     return slots[depth][0] == moveId || slots[depth][1] == moveId;
   }
 
+  /**
+   * @brief Clears the killer table.
+   */
   constexpr void clear() noexcept {
     for (auto& depthSlots : slots) {
       depthSlots.fill(static_cast<i16>(-1));
@@ -180,15 +194,30 @@ struct SearchContext {
  * @brief RAII guard to safely push and pop board hashes on the SearchContext search path.
  */
 struct SearchPathGuard {
+  /**
+   * @brief Reference to the search context.
+   */
   SearchContext& ctx;
+
+  /**
+   * @brief Hash value of the board state.
+   */
   u64 hash;
 
+  /**
+   * @brief Constructor that pushes the hash onto the search path if capacity permits.
+   * @param context Reference to the search context.
+   * @param stateHash The board state hash.
+   */
   SearchPathGuard(SearchContext& context, u64 stateHash) noexcept : ctx(context), hash(stateHash) {
     if (ctx.pathSize < 128) {
       ctx.searchPath[ctx.pathSize++] = hash;
     }
   }
 
+  /**
+   * @brief Destructor that pops the hash from the search path.
+   */
   ~SearchPathGuard() noexcept {
     if (ctx.pathSize > 0 && ctx.searchPath[ctx.pathSize - 1] == hash) {
       ctx.pathSize--;

@@ -481,14 +481,44 @@ namespace detail {
  * @brief Stores structural properties of the board computed at compile time.
  */
 struct boardMetadata {
+  /**
+   * @brief Adjacency lists for each node, containing neighbor node indices.
+   */
   std::array<std::array<i8, 8>, NUM_NODES> neighbors{};
+
+  /**
+   * @brief Count of neighbors for each node.
+   */
   std::array<i8, NUM_NODES> counts{};
+
+  /**
+   * @brief Map storing capture move indices originating from each node.
+   */
   std::array<std::array<i16, 8>, NUM_NODES> captureMoveIdxByNode{};
+
+  /**
+   * @brief Count of capture moves originating from each node.
+   */
   std::array<i8, NUM_NODES> captureMoveCountByNode{};
+
+  /**
+   * @brief Mapping from [fromNode][toNode] to the corresponding move ID (-1 if invalid).
+   */
   std::array<std::array<i16, NUM_NODES>, NUM_NODES> moveIdMap{};
 
+  /**
+   * @brief Total number of simple moves on the board topology.
+   */
   int numSimpleMoves = 0;
+
+  /**
+   * @brief Total number of capture moves on the board topology.
+   */
   int numCaptureMoves = 0;
+
+  /**
+   * @brief Maximum number of moves theoretically possible in any single state.
+   */
   int maxMovesPerState = 0;
 };
 

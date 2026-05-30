@@ -4,7 +4,7 @@ The **Greedy Player** is a 1-step lookahead agent that evaluates all legal moves
 
 ## Overview
 
-The greedy player is implemented in [greedy.hpp](../engine/include/kribu/player/greedy.hpp). It is parameterized by a template evaluation function `EvalFunc`, allowing it to be instantiated with different evaluation metrics (e.g., piece count or node values).
+The greedy player is implemented in [greedy.hpp](../engine/include/kribu/player/greedy.hpp). It utilizes the standard evaluation heuristic `kribu::heuristics::evaluate` at a fixed depth of 3 to select moves.
 
 ______________________________________________________________________
 
@@ -13,7 +13,6 @@ ______________________________________________________________________
 ### `greedy_player_maker`
 
 ```cpp
-template <auto EvalFunc>
 int greedy_player_maker(const boardState& state)
 ```
 
@@ -26,8 +25,8 @@ The function executes the following process:
 1. For each candidate move:
    - Applies the move to get `nextState`.
    - Determines the evaluation perspective:
-     - **Turn Flipped**: If the move ends the current turn (`nextState.activeCaptureIdx == -1`), the board is flipped to the opponent's perspective. The evaluation is negated: `val = -EvalFunc(flip_board(nextState))`.
-     - **Same Turn (Capture Chain)**: If the player can continue capturing (`nextState.activeCaptureIdx != -1`), the turn does not flip. The evaluation is kept positive: `val = EvalFunc(nextState)`.
+     - **Turn Flipped**: If the move ends the current turn (`nextState.activeCaptureIdx == -1`), the board is flipped to the opponent's perspective. The evaluation is negated: `val = -heuristics::evaluate(flip_board(nextState), 3)`.
+     - **Same Turn (Capture Chain)**: If the player can continue capturing (`nextState.activeCaptureIdx != -1`), the turn does not flip. The evaluation is kept positive: `val = heuristics::evaluate(nextState, 3)`.
    - Compares the evaluation:
      - If `val > bestVal`, updates `bestVal` and sets `bestMove` to the current move.
      - If `val == bestVal`, tie-breaking occurs: there is a 50% probability (`(rng() & 1) == 0`) that the current move replaces `bestMove`.
