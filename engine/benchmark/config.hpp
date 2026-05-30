@@ -148,13 +148,13 @@ inline constexpr std::array BENCHMARK_MATCHUPS = {
 
     MatchConfig{.player1Name = "Minimax12",        .player2Name = "Minimax12_Mad2",   .games = 2048,  .maxTurns = 2048},
     MatchConfig{.player1Name = "Minimax12_Mad2",   .player2Name = "Minimax12",        .games = 2048,  .maxTurns = 2048},
-    MatchConfig{.player1Name = "Minimax12",        .player2Name = "Minimax12_Mad10",  .games =  512,  .maxTurns = 2048},
-    MatchConfig{.player1Name = "Minimax12_Mad10",  .player2Name = "Minimax12",        .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12",        .player2Name = "Minimax12_Mad10",  .games =  128,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12_Mad10",  .player2Name = "Minimax12",        .games =  128,  .maxTurns = 2048},
 
     MatchConfig{.player1Name = "MCTS800",          .player2Name = "MCTS800_Mad2",     .games =  512/4,  .maxTurns = 2048},
     MatchConfig{.player1Name = "MCTS800_Mad2",     .player2Name = "MCTS800",          .games =  512/4,  .maxTurns = 2048},
-    MatchConfig{.player1Name = "MCTS800",          .player2Name = "MCTS800_Mad10",    .games =  256/4,  .maxTurns = 2048},
-    MatchConfig{.player1Name = "MCTS800_Mad10",    .player2Name = "MCTS800",          .games =  256/4,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800",          .player2Name = "MCTS800_Mad10",    .games =  128/4,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800_Mad10",    .player2Name = "MCTS800",          .games =  128/4,  .maxTurns = 2048},
 
     MatchConfig{.player1Name = "MCTS1200",         .player2Name = "MCTS1200_Mad2",    .games =  128/4,  .maxTurns = 2048},
     MatchConfig{.player1Name = "MCTS1200_Mad2",    .player2Name = "MCTS1200",         .games =  128/4,  .maxTurns = 2048},
@@ -162,19 +162,19 @@ inline constexpr std::array BENCHMARK_MATCHUPS = {
     MatchConfig{.player1Name = "MCTS1200_Mad10",   .player2Name = "MCTS1200",         .games =   64/4,  .maxTurns = 2048},
 
     // Normal vs other Mad
-    MatchConfig{.player1Name = "Minimax8",         .player2Name = "Minimax12_Mad2",   .games = 2048,  .maxTurns = 2048},
-    MatchConfig{.player1Name = "Minimax12_Mad2",   .player2Name = "Minimax8",         .games = 2048,  .maxTurns = 2048},
-    MatchConfig{.player1Name = "Minimax8",         .player2Name = "Minimax12_Mad10",  .games = 1024,  .maxTurns = 2048},
-    MatchConfig{.player1Name = "Minimax12_Mad10",  .player2Name = "Minimax8",         .games = 1024,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8",         .player2Name = "Minimax12_Mad2",   .games = 2048/2,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12_Mad2",   .player2Name = "Minimax8",         .games = 2048/2,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8",         .player2Name = "Minimax12_Mad10",  .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12_Mad10",  .player2Name = "Minimax8",         .games =  256,  .maxTurns = 2048},
 
     MatchConfig{.player1Name = "Minimax8",         .player2Name = "MCTS800_Mad2",     .games =  512,  .maxTurns = 2048},
     MatchConfig{.player1Name = "MCTS800_Mad2",     .player2Name = "Minimax8",         .games =  512,  .maxTurns = 2048},
     MatchConfig{.player1Name = "Minimax8",         .player2Name = "MCTS1200_Mad2",    .games =  512,  .maxTurns = 2048},
     MatchConfig{.player1Name = "MCTS1200_Mad2",    .player2Name = "Minimax8",         .games =  512,  .maxTurns = 2048},
-    MatchConfig{.player1Name = "Minimax8",         .player2Name = "MCTS800_Mad10",    .games =  256,  .maxTurns = 2048},
-    MatchConfig{.player1Name = "MCTS800_Mad10",    .player2Name = "Minimax8",         .games =  256,  .maxTurns = 2048},
-    MatchConfig{.player1Name = "Minimax8",         .player2Name = "MCTS1200_Mad10",   .games =  256,  .maxTurns = 2048},
-    MatchConfig{.player1Name = "MCTS1200_Mad10",   .player2Name = "Minimax8",         .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8",         .player2Name = "MCTS800_Mad10",    .games =  128,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800_Mad10",    .player2Name = "Minimax8",         .games =  128,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8",         .player2Name = "MCTS1200_Mad10",   .games =  128,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200_Mad10",   .player2Name = "Minimax8",         .games =  128,  .maxTurns = 2048},
 
     MatchConfig{.player1Name = "Minimax12",        .player2Name = "Minimax8_Mad2",    .games = 1024,  .maxTurns = 2048},
     MatchConfig{.player1Name = "Minimax8_Mad2",    .player2Name = "Minimax12",        .games = 1024,  .maxTurns = 2048},
