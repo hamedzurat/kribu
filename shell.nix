@@ -5,15 +5,13 @@ pkgs.mkShell {
 
   # Development tools for the repository and custom tools requested by user
   buildInputs = with pkgs; [
-    # Custom shell & tools requested by the user
     fish
     asciinema
     atuin
-    zoxide       # Modern Rust-based directory jumper matching 'z'
+    zoxide
     bat
     micro
 
-    # Repository build tools
     clang
     cmake
     ccache
@@ -23,7 +21,7 @@ pkgs.mkShell {
     gnumake
     uv
     python3
-    arrow-cpp
+    duckdb
   ];
 
   shellHook = ''
@@ -33,9 +31,6 @@ pkgs.mkShell {
 
     echo "===================================================="
     echo " Welcome to Kribu Dev Shell!"
-    echo " - Requested tools loaded: fish, asciinema, atuin, zoxide (z), bat, micro"
-    echo " - Dev tools loaded: clang, cmake, ccache, entr, doxygen, uv, python3"
-    echo " Starting Fish shell..."
     echo "===================================================="
     
     # Enter fish shell
