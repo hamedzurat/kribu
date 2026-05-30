@@ -148,8 +148,8 @@ inline constexpr std::array BENCHMARK_MATCHUPS = {
 
     MatchConfig{.player1Name = "Minimax12",        .player2Name = "Minimax12_Mad2",   .games = 2048,  .maxTurns = 2048},
     MatchConfig{.player1Name = "Minimax12_Mad2",   .player2Name = "Minimax12",        .games = 2048,  .maxTurns = 2048},
-    MatchConfig{.player1Name = "Minimax12",        .player2Name = "Minimax12_Mad10",  .games =  128,  .maxTurns = 2048},
-    MatchConfig{.player1Name = "Minimax12_Mad10",  .player2Name = "Minimax12",        .games =  128,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12",        .player2Name = "Minimax12_Mad10",  .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12_Mad10",  .player2Name = "Minimax12",        .games =  256,  .maxTurns = 2048},
 
     MatchConfig{.player1Name = "MCTS800",          .player2Name = "MCTS800_Mad2",     .games =  512/4,  .maxTurns = 2048},
     MatchConfig{.player1Name = "MCTS800_Mad2",     .player2Name = "MCTS800",          .games =  512/4,  .maxTurns = 2048},
