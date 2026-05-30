@@ -1,6 +1,6 @@
 { pkgs ? import <nixpkgs> {} }:
 
-pkgs.mkShell {
+(pkgs.mkShell.override { stdenv = pkgs.clangStdenv; }) {
   name = "kribu-dev-shell";
 
   # Development tools for the repository and custom tools requested by user
@@ -12,7 +12,6 @@ pkgs.mkShell {
     bat
     micro
 
-    clang
     cmake
     ccache
     entr
@@ -25,10 +24,6 @@ pkgs.mkShell {
   ];
 
   shellHook = ''
-    # Environment variables or alias configurations can go here
-    export CC=clang
-    export CXX=clang++
-
     echo "===================================================="
     echo " Welcome to Kribu Dev Shell!"
     echo "===================================================="
@@ -37,3 +32,4 @@ pkgs.mkShell {
     exec fish
   '';
 }
+
