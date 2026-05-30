@@ -2,6 +2,18 @@ cmake_minimum_required(VERSION 3.24)
 project(kribu LANGUAGES CXX)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Use compiler-specific ar and ranlib to support LTO with Clang
+if(CMAKE_CXX_COMPILER_AR)
+  set(CMAKE_AR
+      ${CMAKE_CXX_COMPILER_AR}
+      CACHE PATH "AR" FORCE)
+endif()
+if(CMAKE_CXX_COMPILER_RANLIB)
+  set(CMAKE_RANLIB
+      ${CMAKE_CXX_COMPILER_RANLIB}
+      CACHE PATH "RANLIB" FORCE)
+endif()
+
 # Configure compiler launcher (ccache) if available
 find_program(CCACHE_PROGRAM ccache)
 if(CCACHE_PROGRAM)
