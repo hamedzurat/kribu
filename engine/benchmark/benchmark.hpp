@@ -61,8 +61,10 @@ struct GameOutcome {
  * @brief Abstract representation of an AI player in the tournament.
  */
 struct Player {
+  std::string_view type = "unknown";
   std::string_view name;
   int (*select)(const boardState&) = nullptr;
+  int depth = 0;
   int madness = 0;
 };
 
@@ -401,21 +403,16 @@ inline bool play_single_turn(boardState& state,
  * @brief Plays a single game between two players, saving turn history.
  * @param player1 The first player.
  * @param player2 The second player.
- * @param p1StartsFirst True if Player 1 plays first, false if Player 2.
  * @param perf Accumulator for timing and node counts for both players.
  * @param maxTurns Maximum number of turns (plies) allowed before a draw is declared.
  * @param history Output vector where each turn's state/decision is recorded.
  * @return The outcome of the game (winner/draw and margin).
  */
-inline GameOutcome play_single_game(const Player& player1,
-                                    const Player& player2,
-                                    bool p1StartsFirst,
-                                    GamePerf& perf,
-                                    i32 maxTurns,
-                                    std::vector<TurnRecord>& history) {
+inline GameOutcome play_single_game(
+    const Player& player1, const Player& player2, GamePerf& perf, i32 maxTurns, std::vector<TurnRecord>& history) {
   boardState state = INITIAL_STATE;
   i32 turnCount = 0;
-  bool isP1Turn = p1StartsFirst;
+  bool isP1Turn = true;
   i32 forcedRandomTurnsLeft = 0;
 
   std::vector<u64> gameHistoryHashes;
@@ -467,11 +464,10 @@ inline MatchStats run_matchup_multithreaded(const Player& player1,  // NOLINT(re
       }
 
       int globalId = config.globalGameId ? config.globalGameId->fetch_add(1, std::memory_order_relaxed) : gameIdx;
-      bool p1Starts = (gameIdx % 2 == 0);
       GamePerf perf;
       std::vector<TurnRecord> gameHistory;
 
-      GameOutcome outcome = play_single_game(player1, player2, p1Starts, perf, config.maxTurns, gameHistory);
+      GameOutcome outcome = play_single_game(player1, player2, perf, config.maxTurns, gameHistory);
 
       save_game(player1.name, player2.name, globalId, outcome, gameHistory);
 

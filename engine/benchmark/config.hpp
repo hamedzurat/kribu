@@ -29,8 +29,6 @@ struct MatchConfig {
   int maxTurns;
 };
 
-}  // namespace kribu::benchmark
-
 // Architecture:                x86_64
 //   CPU op-mode(s):            32-bit, 64-bit
 //   Address sizes:             48 bits physical, 48 bits virtual
@@ -48,8 +46,6 @@ struct MatchConfig {
 //   L2:                        16 MiB
 //   L3:                        128 MiB
 
-namespace kribu::benchmark {
-
 /**
  * @brief Number of worker threads for parallel game execution.
  */
@@ -58,40 +54,190 @@ inline constexpr int THREAD_COUNT = 32;
 /**
  * @brief Compile-time defined array of benchmark matchups.
  *
- * @details Two categories:
+ * @details Two data-generation categories:
  *
- *  POLICY matchups (1000 games, maxTurns=1024)
+ *  POLICY matchups (~45,600 games)
  *    Strong-player moves are the training signal for the policy network.
- *    Filter by playerPlayed (exclude "ForcedRandom" / "MadPlayer") in post-processing.
  *
- *  VALUE matchups (200 games, maxTurns=512)
+ *    Structure:
+ *      - Deterministic normal-vs-normal grid is included once per ordered pair
+ *        because these games are reproducible and do not need repeated sampling.
+ *      - Most policy diversity comes from Mad variants, where injected randomness
+ *        produces different trajectories from otherwise strong players.
+ *      - Full Mad-vs-Mad coverage is intentionally avoided because it is too
+ *        expensive; only a small low-cost subset is included for extra stochastic
+ *        cross-play diversity.
+ *
+ *    Post-processing:
+ *      - Filter by playerPlayed.
+ *      - Exclude moves made by "ForcedRandom" / "MadPlayer".
+ *      - Keep only moves made by the underlying strong policy.
+ *
+ *  VALUE matchups (~35,800 games)
  *    Diverse skill gaps and outcome distributions for value-network training.
- *    All turns from all games are used; label is derived from the game outcome.
+ *
+ *    Structure:
+ *      - Random/Greedy self-play provides weak and noisy baseline outcomes.
+ *      - Random/Greedy vs strong players provides clear win/loss labels.
+ *      - Both player orders are included to reduce first-player/side bias.
+ *
+ *    Post-processing:
+ *      - All turns from all games are usable.
+ *      - Label is derived from the final game outcome.
+ *
+ *  Target: ~81,400 games total.
+ *    Runtime and generated turn count depend on average game length.
+ *    Minimax8 and MCTS800 are intentionally oversampled because they are faster.
  */
 inline constexpr std::array BENCHMARK_MATCHUPS = {
     // clang-format off
+    // ── POLICY matchups ──────────────────────────────────────────────────────
+    // zero randomness
+    MatchConfig{.player1Name = "Minimax8",       .player2Name = "Minimax8",       .games = 1,    .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8",       .player2Name = "Minimax12",      .games = 1,    .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8",       .player2Name = "MCTS800",        .games = 1,    .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8",       .player2Name = "MCTS1200",       .games = 1,    .maxTurns = 2048},
+    
+    MatchConfig{.player1Name = "Minimax12",      .player2Name = "Minimax8",       .games = 1,    .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12",      .player2Name = "Minimax12",      .games = 1,    .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12",      .player2Name = "MCTS800",        .games = 1,    .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12",      .player2Name = "MCTS1200",       .games = 1,    .maxTurns = 2048},
 
-    // ── POLICY matchups (1000 games × maxTurns=1024) ─────────────────────────
-    //    Only strong player moves are kept for policy training.
-    MatchConfig{.player1Name = "MinimaxD8",         .player2Name = "MinimaxD8",           .games = 2, .maxTurns = 1024},
-    MatchConfig{.player1Name = "MinimaxD8",         .player2Name = "MCTS_EpsGreedy1000",  .games = 2, .maxTurns = 1024},
-    MatchConfig{.player1Name = "MinimaxD8",         .player2Name = "MCTS_EpsGreedy800",   .games = 2, .maxTurns = 1024},
-    MatchConfig{.player1Name = "MinimaxD8",         .player2Name = "MCTS_Heuristic800",   .games = 2, .maxTurns = 1024},
-    MatchConfig{.player1Name = "MinimaxD8",         .player2Name = "MinimaxD8_Mad2",      .games = 2, .maxTurns = 1024},
+    MatchConfig{.player1Name = "MCTS800",        .player2Name = "Minimax8",       .games = 1,    .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800",        .player2Name = "Minimax12",      .games = 1,    .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800",        .player2Name = "MCTS800",        .games = 1,    .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800",        .player2Name = "MCTS1200",       .games = 1,    .maxTurns = 2048},
 
-    // ── VALUE matchups (200 games × maxTurns=512) ────────────────────────────
+    MatchConfig{.player1Name = "MCTS1200",       .player2Name = "Minimax8",       .games = 1,    .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200",       .player2Name = "Minimax12",      .games = 1,    .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200",       .player2Name = "MCTS800",        .games = 1,    .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200",       .player2Name = "MCTS1200",       .games = 1,    .maxTurns = 2048},
+
+    // Madness variants
+
+    // Same Mad vs Mad
+    MatchConfig{.player1Name = "Minimax8_Mad2",    .player2Name = "Minimax8_Mad2",    .games = 2048,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8_Mad10",   .player2Name = "Minimax8_Mad10",   .games = 1024,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12_Mad2",   .player2Name = "Minimax12_Mad2",   .games = 1024,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12_Mad10",  .player2Name = "Minimax12_Mad10",  .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800_Mad2",     .player2Name = "MCTS800_Mad2",     .games = 2048,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800_Mad10",    .player2Name = "MCTS800_Mad10",    .games = 1024,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200_Mad2",    .player2Name = "MCTS1200_Mad2",    .games = 1024,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200_Mad10",   .player2Name = "MCTS1200_Mad10",   .games =  512,  .maxTurns = 2048},
+
+    // Normal vs same Mad
+    MatchConfig{.player1Name = "Minimax8",         .player2Name = "Minimax8_Mad2",    .games = 1024,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8_Mad2",    .player2Name = "Minimax8",         .games = 1024,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8",         .player2Name = "Minimax8_Mad10",   .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8_Mad10",   .player2Name = "Minimax8",         .games =  512,  .maxTurns = 2048},
+
+    MatchConfig{.player1Name = "Minimax12",        .player2Name = "Minimax12_Mad2",   .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12_Mad2",   .player2Name = "Minimax12",        .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12",        .player2Name = "Minimax12_Mad10",  .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12_Mad10",  .player2Name = "Minimax12",        .games =  256,  .maxTurns = 2048},
+
+    MatchConfig{.player1Name = "MCTS800",          .player2Name = "MCTS800_Mad2",     .games = 1024,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800_Mad2",     .player2Name = "MCTS800",          .games = 1024,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800",          .player2Name = "MCTS800_Mad10",    .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800_Mad10",    .player2Name = "MCTS800",          .games =  512,  .maxTurns = 2048},
+
+    MatchConfig{.player1Name = "MCTS1200",         .player2Name = "MCTS1200_Mad2",    .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200_Mad2",    .player2Name = "MCTS1200",         .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200",         .player2Name = "MCTS1200_Mad10",   .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200_Mad10",   .player2Name = "MCTS1200",         .games =  256,  .maxTurns = 2048},
+
+    // Normal vs other Mad
+    MatchConfig{.player1Name = "Minimax8",         .player2Name = "Minimax12_Mad2",   .games = 1024,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12_Mad2",   .player2Name = "Minimax8",         .games = 1024,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8",         .player2Name = "Minimax12_Mad10",  .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12_Mad10",  .player2Name = "Minimax8",         .games =  512,  .maxTurns = 2048},
+
+    MatchConfig{.player1Name = "Minimax8",         .player2Name = "MCTS800_Mad2",     .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800_Mad2",     .player2Name = "Minimax8",         .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8",         .player2Name = "MCTS1200_Mad2",    .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200_Mad2",    .player2Name = "Minimax8",         .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8",         .player2Name = "MCTS800_Mad10",    .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800_Mad10",    .player2Name = "Minimax8",         .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8",         .player2Name = "MCTS1200_Mad10",   .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200_Mad10",   .player2Name = "Minimax8",         .games =  256,  .maxTurns = 2048},
+
+    MatchConfig{.player1Name = "Minimax12",        .player2Name = "Minimax8_Mad2",    .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8_Mad2",    .player2Name = "Minimax12",        .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12",        .player2Name = "Minimax8_Mad10",   .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8_Mad10",   .player2Name = "Minimax12",        .games =  256,  .maxTurns = 2048},
+
+    MatchConfig{.player1Name = "Minimax12",        .player2Name = "MCTS800_Mad2",     .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800_Mad2",     .player2Name = "Minimax12",        .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12",        .player2Name = "MCTS1200_Mad2",    .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200_Mad2",    .player2Name = "Minimax12",        .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12",        .player2Name = "MCTS800_Mad10",    .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800_Mad10",    .player2Name = "Minimax12",        .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12",        .player2Name = "MCTS1200_Mad10",   .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200_Mad10",   .player2Name = "Minimax12",        .games =  256,  .maxTurns = 2048},
+
+    MatchConfig{.player1Name = "MCTS800",          .player2Name = "MCTS1200_Mad2",    .games = 1024,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200_Mad2",    .player2Name = "MCTS800",          .games = 1024,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800",          .player2Name = "MCTS1200_Mad10",   .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200_Mad10",   .player2Name = "MCTS800",          .games =  256,  .maxTurns = 2048},
+    
+    MatchConfig{.player1Name = "MCTS800",          .player2Name = "Minimax8_Mad2",    .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8_Mad2",    .player2Name = "MCTS800",          .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800",          .player2Name = "Minimax12_Mad2",   .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12_Mad2",   .player2Name = "MCTS800",          .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800",          .player2Name = "Minimax8_Mad10",   .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8_Mad10",   .player2Name = "MCTS800",          .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800",          .player2Name = "Minimax12_Mad10",  .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12_Mad10",  .player2Name = "MCTS800",          .games =  256,  .maxTurns = 2048},
+
+    MatchConfig{.player1Name = "MCTS1200",         .player2Name = "MCTS800_Mad2",     .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800_Mad2",     .player2Name = "MCTS1200",         .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200",         .player2Name = "MCTS800_Mad10",    .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800_Mad10",    .player2Name = "MCTS1200",         .games =  256,  .maxTurns = 2048},
+
+    MatchConfig{.player1Name = "MCTS1200",         .player2Name = "Minimax8_Mad2",    .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8_Mad2",    .player2Name = "MCTS1200",         .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200",         .player2Name = "Minimax12_Mad2",   .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12_Mad2",   .player2Name = "MCTS1200",         .games =  512,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200",         .player2Name = "Minimax8_Mad10",   .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8_Mad10",   .player2Name = "MCTS1200",         .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200",         .player2Name = "Minimax12_Mad10",  .games =  256,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12_Mad10",  .player2Name = "MCTS1200",         .games =  256,  .maxTurns = 2048},
+
+    // Low-cost sampled Mad vs Mad
+    MatchConfig{.player1Name = "Minimax8_Mad2",    .player2Name = "MCTS800_Mad2",     .games =  1024, .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800_Mad2",     .player2Name = "Minimax8_Mad2",    .games =  1024, .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8_Mad2",    .player2Name = "Minimax8_Mad10",   .games =  1024, .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8_Mad10",   .player2Name = "Minimax8_Mad2",    .games =  1024, .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800_Mad10",    .player2Name = "Minimax8_Mad2",    .games =  1024, .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8_Mad10",   .player2Name = "MCTS800_Mad2",     .games =  1024, .maxTurns = 2048},
+ 
+    // ── VALUE matchups ───────────────────────────────────────────────────────
     //    Diverse skill gaps produce diverse outcome labels for value training.
-    MatchConfig{.player1Name = "MinimaxD8",         .player2Name = "RandomPlayer",        .games = 2,  .maxTurns = 512},
-    MatchConfig{.player1Name = "MinimaxD8",         .player2Name = "GreedyPlayer",        .games = 2,  .maxTurns = 512},
-    MatchConfig{.player1Name = "MinimaxD8",         .player2Name = "MinimaxD8_Mad5",      .games = 2,  .maxTurns = 512},
-    MatchConfig{.player1Name = "MinimaxD8",         .player2Name = "MinimaxD8_Mad10",     .games = 2,  .maxTurns = 512},
-    MatchConfig{.player1Name = "MCTS_EpsGreedy800", .player2Name = "RandomPlayer",        .games = 2,  .maxTurns = 512},
-    MatchConfig{.player1Name = "MCTS_EpsGreedy800", .player2Name = "GreedyPlayer",        .games = 2,  .maxTurns = 512},
-    MatchConfig{.player1Name = "MCTS_Random800",    .player2Name = "RandomPlayer",        .games = 2,  .maxTurns = 512},
-    MatchConfig{.player1Name = "GreedyPlayer",      .player2Name = "RandomPlayer",        .games = 2,  .maxTurns = 512},
-    MatchConfig{.player1Name = "GreedyPlayer_Mad30",.player2Name = "RandomPlayer",        .games = 2,  .maxTurns = 512},
-    MatchConfig{.player1Name = "MinimaxD8_Mad2",    .player2Name = "MinimaxD8_Mad5",      .games = 2,  .maxTurns = 512},
-    MatchConfig{.player1Name = "MinimaxD8_Mad5",    .player2Name = "GreedyPlayer",        .games = 2,  .maxTurns = 512},
+    MatchConfig{.player1Name = "RandomPlayer",  .player2Name = "RandomPlayer",  .games =  512, .maxTurns = 4096},
+    MatchConfig{.player1Name = "GreedyPlayer",  .player2Name = "GreedyPlayer",  .games =  512, .maxTurns = 4096},
+
+    MatchConfig{.player1Name = "GreedyPlayer",  .player2Name = "RandomPlayer",  .games = 1024, .maxTurns = 2048},
+    MatchConfig{.player1Name = "RandomPlayer",  .player2Name = "GreedyPlayer",  .games = 1024, .maxTurns = 2048},
+
+    MatchConfig{.player1Name = "Minimax8",      .player2Name = "RandomPlayer",  .games = 2048, .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8",      .player2Name = "GreedyPlayer",  .games = 2048, .maxTurns = 2048},
+    MatchConfig{.player1Name = "RandomPlayer",  .player2Name = "Minimax8",      .games = 2048, .maxTurns = 2048},
+    MatchConfig{.player1Name = "GreedyPlayer",  .player2Name = "Minimax8",      .games = 2048, .maxTurns = 2048},
+
+    MatchConfig{.player1Name = "Minimax12",     .player2Name = "RandomPlayer",  .games = 2048, .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax12",     .player2Name = "GreedyPlayer",  .games = 2048, .maxTurns = 2048},
+    MatchConfig{.player1Name = "RandomPlayer",  .player2Name = "Minimax12",     .games = 2048, .maxTurns = 2048},
+    MatchConfig{.player1Name = "GreedyPlayer",  .player2Name = "Minimax12",     .games = 2048, .maxTurns = 2048},
+
+    MatchConfig{.player1Name = "MCTS800",       .player2Name = "RandomPlayer",  .games = 2048, .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800",       .player2Name = "GreedyPlayer",  .games = 2048, .maxTurns = 2048},
+    MatchConfig{.player1Name = "RandomPlayer",  .player2Name = "MCTS800",       .games = 2048, .maxTurns = 2048},
+    MatchConfig{.player1Name = "GreedyPlayer",  .player2Name = "MCTS800",       .games = 2048, .maxTurns = 2048},
+
+    MatchConfig{.player1Name = "MCTS1200",      .player2Name = "RandomPlayer",  .games = 2048, .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200",      .player2Name = "GreedyPlayer",  .games = 2048, .maxTurns = 2048},
+    MatchConfig{.player1Name = "RandomPlayer",  .player2Name = "MCTS1200",      .games = 2048, .maxTurns = 2048},
+    MatchConfig{.player1Name = "GreedyPlayer",  .player2Name = "MCTS1200",      .games = 2048, .maxTurns = 2048},
 
     // clang-format on
 };

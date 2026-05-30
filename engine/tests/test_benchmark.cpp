@@ -21,7 +21,7 @@ TEST_CASE("Benchmark - Forced Random Turns Tracking", "[benchmark]") {
   GamePerf perf;
   std::vector<TurnRecord> history;
 
-  const GameOutcome outcome = play_single_game(player1, player2, true, perf, 100, history);
+  const GameOutcome outcome = play_single_game(player1, player2, perf, 100, history);
 
   int forcedRandomTurns = 0;
   for (const auto& rec : history) {

@@ -6,7 +6,6 @@
 #pragma once
 
 #include "benchmark.hpp"
-#include "kribu/board.hpp"
 #include "kribu/player/greedy.hpp"
 #include "kribu/player/mcts.hpp"
 #include "kribu/player/minimax.hpp"
@@ -18,78 +17,36 @@ using namespace kribu::benchmark;
 
 /**
  * @brief Compile-time defined array of benchmark players.
- * @details Players are defined and named in place using stateless C++ lambdas, which decay to function pointers.
- *
- * Skill spectrum (weakest → strongest):
- *   RandomPlayer < GreedyPlayer < MadPlayers < MCTS variants < MinimaxD8
- *
- * mad% variants of MinimaxD8 inject random moves at the given probability, producing
- * a spectrum of near-perfect to imperfect play for value-network diversity.
+ * @details Players are defined function pointers.
  */
 inline constexpr std::array BENCHMARK_PLAYERS = {
     // clang-format off
+    // ── Weak baselines ────────────────────────────────────────────────────────────────
+    Player{.type = "random", .name = "RandomPlayer",       .select = select_random},
+    Player{.type = "greedy", .name = "GreedyPlayer",       .select = greedy_player_maker},
+    Player{.type = "greedy", .name = "GreedyPlayer_Mad10", .select = greedy_player_maker, .madness = 10},
 
-    // ── Weak baselines ──────────────────────────────────────────────────────
-    Player{
-        .name   = "RandomPlayer",
-        .select = [](const boardState& state) { return select_random(state); },
-    },
-    Player{
-        .name   = "GreedyPlayer",
-        .select = [](const boardState& state) { return greedy_player_maker(state); },
-    },
+    // ── Minimax ───────────────────────────────────────────────────────────────────────
+    Player{.type = "minimax", .name = "Minimax8",       .select = minimax_player_maker<8>, .depth = 8},
+    Player{.type = "minimax", .name = "Minimax8_Mad2",  .select = minimax_player_maker<8>, .depth = 8, .madness = 2},
+    Player{.type = "minimax", .name = "Minimax8_Mad10", .select = minimax_player_maker<8>, .depth = 8, .madness = 10},
+    
+    Player{.type = "minimax", .name = "Minimax12",       .select = minimax_player_maker<12>, .depth = 12},
+    Player{.type = "minimax", .name = "Minimax12_Mad2",  .select = minimax_player_maker<12>, .depth = 12, .madness = 2},
+    Player{.type = "minimax", .name = "Minimax12_Mad10", .select = minimax_player_maker<12>, .depth = 12, .madness = 10},
+    
+    // Player{.type = "minimax", .name = "Minimax16",       .select = minimax_player_maker<16>, .depth = 16},
+    // Player{.type = "minimax", .name = "Minimax16_Mad2",  .select = minimax_player_maker<16>, .depth = 16, .madness = 2},
+    // Player{.type = "minimax", .name = "Minimax16_Mad10", .select = minimax_player_maker<16>, .depth = 16, .madness = 10},
 
-    // ── Strong player: pure Minimax Depth-8 ─────────────────────────────────
-    Player{
-        .name   = "MinimaxD8",
-        .select = [](const boardState& state) { return minimax_player_maker<8>(state); },
-    },
+    // ── MCTS ──────────────────────────────────────────────────────────────────────────
+    Player{.type = "mcts", .name = "MCTS800",       .select = mcts_player_maker<800>, .depth = 800},
+    Player{.type = "mcts", .name = "MCTS800_Mad2",  .select = mcts_player_maker<800>, .depth = 800, .madness = 2},
+    Player{.type = "mcts", .name = "MCTS800_Mad10", .select = mcts_player_maker<800>, .depth = 800, .madness = 10},
 
-    // ── Minimax D8 with madness injections (for value-network diversity) ─────
-    //    madness = % chance of replacing the selected move with a random one.
-    Player{
-        .name    = "MinimaxD8_Mad2",
-        .select  = [](const boardState& state) { return minimax_player_maker<8>(state); },
-        .madness = 2,
-    },
-    Player{
-        .name    = "MinimaxD8_Mad5",
-        .select  = [](const boardState& state) { return minimax_player_maker<8>(state); },
-        .madness = 5,
-    },
-    Player{
-        .name    = "MinimaxD8_Mad10",
-        .select  = [](const boardState& state) { return minimax_player_maker<8>(state); },
-        .madness = 10,
-    },
-
-    // ── MCTS variants @ 800 iterations ──────────────────────────────────────
-    Player{
-        .name   = "MCTS_Random800",
-        .select = [](const boardState& state) { return mcts_player_maker<RandomRollout, 800>(state); },
-    },
-    Player{
-        .name   = "MCTS_Heuristic800",
-        .select = [](const boardState& state) { return mcts_player_maker<HeuristicRollout, 800>(state); },
-    },
-    Player{
-        .name   = "MCTS_EpsGreedy800",
-        .select = [](const boardState& state) { return mcts_player_maker<EpsilonGreedyRollout, 800>(state); },
-    },
-
-    // ── MCTS best variant @ 1000 iterations (better teacher signal) ──────────
-    Player{
-        .name   = "MCTS_EpsGreedy1000",
-        .select = [](const boardState& state) { return mcts_player_maker<EpsilonGreedyRollout, 1000>(state); },
-    },
-
-    // ── Greedy with madness (extra weak/noisy games for value training) ───────
-    Player{
-        .name    = "GreedyPlayer_Mad30",
-        .select  = [](const boardState& state) { return greedy_player_maker(state); },
-        .madness = 30,
-    },
-
+    Player{.type = "mcts", .name = "MCTS1200",       .select = mcts_player_maker<1200>, .depth = 1200},
+    Player{.type = "mcts", .name = "MCTS1200_Mad2",  .select = mcts_player_maker<1200>, .depth = 1200, .madness = 2},
+    Player{.type = "mcts", .name = "MCTS1200_Mad10", .select = mcts_player_maker<1200>, .depth = 1200, .madness = 10},
     // clang-format on
 };
 

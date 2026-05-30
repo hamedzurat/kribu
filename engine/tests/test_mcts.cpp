@@ -13,8 +13,8 @@ using namespace kribu::player;
 
 TEST_CASE("MCTS Initial State Move", "[mcts]") {
   boardState state = INITIAL_STATE;
-  // Test sequential MCTS with HeuristicRollout
-  int moveId = mcts_player_maker<HeuristicRollout, 100>(state);
+  // Test sequential MCTS
+  int moveId = mcts_player_maker<100>(state);
   REQUIRE(moveId != -1);
   REQUIRE(kribu::sholoGuti::is_valid(state, moveId));
 }
@@ -22,7 +22,7 @@ TEST_CASE("MCTS Initial State Move", "[mcts]") {
 TEST_CASE("MCTS Parallel Initial State Move", "[mcts]") {
   boardState state = INITIAL_STATE;
   // Test parallel MCTS (2 threads)
-  int moveId = mcts_player_maker<RandomRollout, 100>(state);
+  int moveId = mcts_player_maker<100>(state);
   REQUIRE(moveId != -1);
   REQUIRE(kribu::sholoGuti::is_valid(state, moveId));
 }
@@ -39,7 +39,7 @@ TEST_CASE("MCTS Find Winning Capture", "[mcts]") {
   REQUIRE(winMoveId != -1);
   REQUIRE(kribu::sholoGuti::is_capture_move(winMoveId));
 
-  int moveId = mcts_player_maker<RandomRollout, 500>(state);
+  int moveId = mcts_player_maker<500>(state);
   REQUIRE(moveId == winMoveId);
 }
 
@@ -54,6 +54,6 @@ TEST_CASE("MCTS Early Termination", "[mcts]") {
   REQUIRE(winMoveId != -1);
 
   // 1000 iterations is enough that early term will trigger if implemented
-  int moveId = mcts_player_maker<RandomRollout, 1000>(state);
+  int moveId = mcts_player_maker<1000>(state);
   REQUIRE(moveId == winMoveId);
 }

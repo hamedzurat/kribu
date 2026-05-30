@@ -196,43 +196,6 @@ namespace {
 GameWriterQueue gameQueue;
 }
 
-std::string get_player_type(std::string_view name) {
-  std::string nameStr(name);
-  if (nameStr.find("Random") != std::string::npos) {
-    return "random";
-  }
-  if (nameStr.find("Greedy") != std::string::npos) {
-    return "greedy";
-  }
-  if (nameStr.find("Minimax") != std::string::npos) {
-    return "minimax";
-  }
-  if (nameStr.find("MCTS") != std::string::npos) {
-    return "mcts";
-  }
-  if (nameStr == "ForcedRandom") {
-    return "forced_random";
-  }
-  if (nameStr == "MadPlayer") {
-    return "mad_player";
-  }
-  return "unknown";
-}
-
-int get_player_depth(std::string_view name) {
-  std::string nameStr(name);
-  if (nameStr.find("D8") != std::string::npos) {
-    return 8;
-  }
-  if (nameStr.find("800") != std::string::npos) {
-    return 800;
-  }
-  if (nameStr.find("1000") != std::string::npos) {
-    return 1000;
-  }
-  return 0;
-}
-
 void initialize_duckdb(duckdb::Connection& con) {  // NOLINT(misc-include-cleaner)
   con.Query(
       "CREATE TABLE IF NOT EXISTS players ("
@@ -315,11 +278,9 @@ void insert_players(duckdb::Connection& con, const std::map<std::string, Player>
       "(name) DO NOTHING");
 
   for (const auto& [name, player] : players) {
-    std::string type = get_player_type(name);
-    int depth = get_player_depth(name);
     auto prep = con.Prepare(
         "INSERT INTO players (name, player_type, depth, madness) VALUES (?, ?, ?, ?) ON CONFLICT (name) DO NOTHING");
-    prep->Execute(name, type, depth, player.madness);
+    prep->Execute(name, std::string(player.type), player.depth, player.madness);
   }
 }
 

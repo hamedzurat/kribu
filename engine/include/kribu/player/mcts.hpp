@@ -18,14 +18,12 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <limits>
 #include <numbers>
 #include <vector>
 
 #include "kribu/board.hpp"
-#include "kribu/fast_rng.hpp"
 #include "kribu/heuristic.hpp"
-#include "kribu/player/random.hpp"
+#include "kribu/rollout.hpp"
 #include "kribu/rules.hpp"
 #include "kribu/types.hpp"
 
@@ -55,7 +53,7 @@ constexpr f32 MCTS_FPU_REDUCTION = 0.1F;
 /**
  * @brief Iteration interval for checking early termination.
  */
-constexpr int MCTS_EARLY_TERM_INTERVAL = 50;
+constexpr int MCTS_EARLY_TERM_INTERVAL = 100;
 
 /**
  * @brief Visit share threshold to trigger early termination (0.85 = 85%).
@@ -108,122 +106,6 @@ constexpr f32 MCTS_SCORE_SCALE = 3000.0F;
   }
   return ordered;
 }
-
-// ── Rollout Policies ────────────────────────────────────────────────────
-
-/**
- * @struct RandomRollout
- * @brief Playout policy that selects moves purely at random.
- */
-struct RandomRollout {
-  /**
-   * @brief Selects a move randomly.
-   * @param state Current board state.
-   * @return Random legal move ID, or -1 if none.
-   */
-  static int select_move(const boardState& state) { return select_random(state); }
-
-  /**
-   * @brief Simple static evaluation at the end of the playout using piece count.
-   * @param state Board state to evaluate.
-   * @return Piece count evaluation score.
-   */
-  static f64 evaluate(const boardState& state) noexcept { return static_cast<f64>(heuristics::evaluate(state, 0)); }
-};
-
-/**
- * @struct HeuristicRollout
- * @brief Playout policy that prioritizes captures (to keep rollouts realistic), otherwise random,
- *        and uses a custom evaluation.
- * */
-struct HeuristicRollout {
-  /**
-   * @brief Selects a capture move if available, otherwise random.
-   * @param state Current board state.
-   * @return Selected move ID, or -1 if none.
-   */
-  static int select_move(const boardState& state) {
-    const MoveList moves = all_possible_moves(state);
-    if (moves.empty()) {
-      return -1;
-    }
-    MoveList captures;
-    for (int i = 0; i < moves.count; ++i) {
-      if (is_capture_move(moves.moves[i])) {
-        captures.push(moves.moves[i]);
-      }
-    }
-    if (!captures.empty()) {
-      return captures.moves[random_index(captures.size())];
-    }
-    return moves.moves[random_index(moves.size())];
-  }
-
-  /**
-   * @brief Evaluates the board state using the provided EvalFunc heuristic function.
-   * @param state Board state to evaluate.
-   * @return Evaluation score.
-   */
-  static f64 evaluate(const boardState& state) noexcept { return static_cast<f64>(heuristics::evaluate(state, 1)); }
-};
-
-/**
- * @struct EpsilonGreedyRollout
- * @brief Playout policy that greedily picks the best-evaluated move with
- *        probability (1 - ε), or a random move with probability ε.
- * @details Produces more realistic rollouts than pure random by exploiting
- *        domain knowledge, while ε-randomness prevents deterministic loops.
- * */
-struct EpsilonGreedyRollout {
-  /**
-   * @brief Selects a move using epsilon-greedy strategy.
-   * @param state Current board state.
-   * @return Selected move ID, or -1 if none.
-   */
-  static int select_move(const boardState& state) {
-    const MoveList moves = all_possible_moves(state);
-    if (moves.empty()) {
-      return -1;
-    }
-    if (random_chance(MCTS_EPSILON)) {
-      return moves.moves[random_index(moves.size())];
-    }
-    return pick_best_move(state, moves);
-  }
-
-  /**
-   * @brief Evaluates the board state using the provided EvalFunc.
-   * @param state Board state to evaluate.
-   * @return Evaluation score.
-   */
-  static f64 evaluate(const boardState& state) noexcept { return static_cast<f64>(heuristics::evaluate(state, 1)); }
-
- private:
-  /**
-   * @brief Picks the move with the highest immediate heuristic value.
-   * @param state Current board state.
-   * @param moves Available legal moves.
-   * @return Move ID with best evaluation.
-   */
-  static int pick_best_move(const boardState& state, const MoveList& moves) {
-    int bestMove = moves.moves[0];
-    i32 bestVal = std::numeric_limits<i32>::min();
-    for (int i = 0; i < moves.count; ++i) {
-      const boardState next = apply_move(state, moves.moves[i]);
-      i32 val = 0;
-      if (next.activeCaptureIdx == -1) {
-        val = -heuristics::evaluate(flip_board(next), 0);
-      } else {
-        val = heuristics::evaluate(next, 0);
-      }
-      if (val > bestVal) {
-        bestVal = val;
-        bestMove = moves.moves[i];
-      }
-    }
-    return bestMove;
-  }
-};
 
 // ── MCTS Node ───────────────────────────────────────────────────────────
 
@@ -312,9 +194,7 @@ struct MCTSNode {
  * @class MCTS
  * @brief Monte Carlo Tree Search engine with UCT, progressive bias, FPU,
  *        O(1) expansion, and early termination.
- * @tparam RolloutPolicy Policy defining move selection and evaluation during rollouts.
  */
-template <typename RolloutPolicy>
 class MCTS {
  public:
   /**
@@ -370,7 +250,7 @@ class MCTS {
    * @param move Move ID that produced this state.
    * @return Constructed MCTSNode.
    */
-  [[nodiscard]] MCTSNode make_node(const boardState& state, int parent, int move, bool turnFlipped) {
+  [[nodiscard]] static MCTSNode make_node(const boardState& state, int parent, int move, bool turnFlipped) {
     MCTSNode node;
     node.state = state;
     node.parentIdx = parent;
@@ -499,7 +379,7 @@ class MCTS {
    * @param state Starting board state for the rollout.
    * @return Simulation result in [0, 1].
    */
-  [[nodiscard]] f32 simulate(boardState state) {
+  [[nodiscard]] static f32 simulate(boardState state) {
     bool isP1Turn = true;
 
     for (int step = 0; step < MCTS_MAX_ROLLOUT_STEPS; ++step) {
@@ -511,7 +391,7 @@ class MCTS {
         return isP1Turn ? 0.0F : 1.0F;
       }
 
-      int moveId = RolloutPolicy::select_move(state);
+      int moveId = Rollout::select_move(state);
       if (moveId == -1) {
         return isP1Turn ? 0.0F : 1.0F;
       }
@@ -519,7 +399,7 @@ class MCTS {
       advance_rollout(state, isP1Turn, moveId);
     }
 
-    const auto score = static_cast<f32>(RolloutPolicy::evaluate(state));
+    const auto score = static_cast<f32>(Rollout::evaluate(state));
     f32 val = mcts_score_to_value(score);
     return isP1Turn ? val : (1.0F - val);
   }
@@ -688,14 +568,13 @@ class MCTS {
 
 /**
  * @brief Player maker function template for MCTS players.
- * @tparam RolloutPolicy Policy type for rollout simulation.
  * @tparam Iterations Number of MCTS iterations per search.
- * * @param state Current board state.
+ * @param state Current board state.
  * @return Selected move ID.
  */
-template <typename RolloutPolicy, int Iterations = 800>
+template <int Iterations = 800>
 [[nodiscard]] inline int mcts_player_maker(const boardState& state) {
-  thread_local MCTS<RolloutPolicy> solver(Iterations);
+  thread_local MCTS solver(Iterations);
   return solver.select_move(state);
 }
 
