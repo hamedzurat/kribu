@@ -429,14 +429,15 @@ int get_max_game_id() {
  * @brief Thread-safe progress and telemetry statistics for a single tournament matchup.
  */
 struct MatchupState {
-  std::string p1Name;                                                     ///< Name of Player 1.
-  std::string p2Name;                                                     ///< Name of Player 2.
-  int games = 0;                                                          ///< Total games to play.
-  int maxTurns = 0;                                                       ///< Maximum turns per game.
-  std::atomic<int> completedGames{0};                                     ///< Atomic count of completed games.
-  std::atomic<int> p1Wins{0};                                             ///< Atomic count of Player 1 wins.
-  std::atomic<int> p2Wins{0};                                             ///< Atomic count of Player 2 wins.
-  std::atomic<int> draws{0};                                              ///< Atomic count of draws.
+  std::string p1Name;                  ///< Name of Player 1.
+  std::string p2Name;                  ///< Name of Player 2.
+  int games = 0;                       ///< Total games to play.
+  int maxTurns = 0;                    ///< Maximum turns per game.
+  int initialCompletedGames = 0;       ///< Number of games completed before current run.
+  std::atomic<int> completedGames{0};  ///< Atomic count of completed games.
+  std::atomic<int> p1Wins{0};          ///< Atomic count of Player 1 wins.
+  std::atomic<int> p2Wins{0};          ///< Atomic count of Player 2 wins.
+  std::atomic<int> draws{0};           ///< Atomic count of draws.
   std::chrono::time_point<std::chrono::high_resolution_clock> startTime;  ///< Matchup start time.
   std::chrono::time_point<std::chrono::high_resolution_clock> endTime;    ///< Matchup end time.
   bool active = false;                                                    ///< True if matchup is currently running.
@@ -474,16 +475,19 @@ ftxui::Element render_matchup_row(const MatchupState& match, int index, bool isA
   auto playersEl =
       hbox({text(match.p1Name) | color(Color::Cyan), text(" vs "), text(match.p2Name) | color(Color::Magenta)});
 
-  Element statsEl = text("");
+  std::string statsStr;
+  Color statsColor = Color::GrayLight;
   if (match.completed && match.registered) {
-    statsEl = text("  (" + std::to_string(match.stats.p1Wins) + "-" + std::to_string(match.stats.p2Wins) + "-"
-                   + std::to_string(match.stats.draws) + ")")
-              | color(Color::GrayLight);
+    statsStr = "  (" + std::to_string(match.stats.p1Wins) + "-" + std::to_string(match.stats.p2Wins) + "-"
+               + std::to_string(match.stats.draws) + " / " + std::to_string(match.games) + ")";
   } else if (match.active) {
-    statsEl = text("  (" + std::to_string(match.p1Wins.load()) + "-" + std::to_string(match.p2Wins.load()) + "-"
-                   + std::to_string(match.draws.load()) + ")")
-              | color(Color::Yellow);
+    statsStr = "  (" + std::to_string(match.p1Wins.load()) + "-" + std::to_string(match.p2Wins.load()) + "-"
+               + std::to_string(match.draws.load()) + " / " + std::to_string(match.games) + ")";
+    statsColor = Color::Yellow;
+  } else {
+    statsStr = "  (0 / " + std::to_string(match.games) + ")";
   }
+  Element statsEl = text(statsStr) | color(statsColor);
 
   Element rowEl =
       hbox({text(std::to_string(index + 1) + ". ") | color(Color::GrayLight), statusEl, playersEl, statsEl});
@@ -508,8 +512,9 @@ ftxui::Element render_active_panel(const MatchupState& match) {
   double elapsedSecs{0.0};
   elapsedSecs = std::chrono::duration<double>(now - match.startTime).count();
   double etaSecs = 0.0;
-  if (completed > 0 && completed < match.games) {
-    etaSecs = (elapsedSecs / completed) * (match.games - completed);
+  int runCompleted = completed - match.initialCompletedGames;
+  if (runCompleted > 0 && completed < match.games) {
+    etaSecs = (elapsedSecs / runCompleted) * (match.games - completed);
   }
 
   auto progressGauge = gauge(progress) | color(Color::Cyan);
@@ -658,6 +663,7 @@ int main() {  // NOLINT(readability-function-cognitive-complexity)
       } else {
         auto existing = existingStats[{state->p1Name, state->p2Name}];
         state->completedGames.store(existing.count);
+        state->initialCompletedGames = existing.count;
         state->p1Wins.store(existing.p1Wins);
         state->p2Wins.store(existing.p2Wins);
         state->draws.store(existing.draws);
@@ -715,6 +721,7 @@ int main() {  // NOLINT(readability-function-cognitive-complexity)
 
         if (gamesToPlay > 0) {
           match.active = true;
+          match.initialCompletedGames = match.completedGames.load();
           match.startTime = std::chrono::high_resolution_clock::now();
 
           const auto& playerFirst = players.at(match.p1Name);
@@ -837,11 +844,25 @@ int main() {  // NOLINT(readability-function-cognitive-complexity)
 
       auto leftColumn = vbox({header, activePanel, sysPanel, footer}) | flex;
 
-      auto rightColumn = border(vbox({center(bold(text("Matchup Queue Window"))) | color(Color::Cyan),
-                                      separator(),
-                                      vbox(std::move(listElements)),
-                                      filler()}))
-                         | color(Color::Cyan) | flex;
+      size_t halfIndex = (listElements.size() + 1) / 2;
+      Elements leftColElements;
+      Elements rightColElements;
+      for (size_t i = 0; i < listElements.size(); ++i) {
+        if (i < halfIndex) {
+          leftColElements.push_back(std::move(listElements[i]));
+        } else {
+          rightColElements.push_back(std::move(listElements[i]));
+        }
+      }
+
+      auto rightColumn =
+          border(vbox(
+              {center(bold(text("Matchup Queue Window"))) | color(Color::Cyan),
+               separator(),
+               hbox({vbox(std::move(leftColElements)) | flex, separator(), vbox(std::move(rightColElements)) | flex})
+                   | flex,
+               filler()}))
+          | color(Color::Cyan) | flex;
 
       return hbox({leftColumn, rightColumn}) | size(WIDTH, EQUAL, termWidth) | size(HEIGHT, EQUAL, termHeight);
     });
