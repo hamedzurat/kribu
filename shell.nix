@@ -3,6 +3,9 @@
 (pkgs.mkShell.override { stdenv = pkgs.clangStdenv; }) {
   name = "kribu-dev-shell";
 
+  # Allow compiling FetchContent/CPM dependencies located in the local build directory
+  NIX_ENFORCE_PURITY = 0;
+
   # Development tools for the repository and custom tools requested by user
   buildInputs = with pkgs; [
     fish
@@ -32,4 +35,3 @@
     exec fish
   '';
 }
-
