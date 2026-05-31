@@ -246,13 +246,13 @@ inline constexpr std::array BENCHMARK_MATCHUPS = {
 
     MatchConfig{.player1Name = "MCTS800",       .player2Name = "RandomPlayer",  .games =  512, .maxTurns = 2048},
     MatchConfig{.player1Name = "RandomPlayer",  .player2Name = "MCTS800",       .games =  512, .maxTurns = 2048},
-    MatchConfig{.player1Name = "MCTS800",       .player2Name = "GreedyPlayer",  .games =  512, .maxTurns = 2048},
-    MatchConfig{.player1Name = "GreedyPlayer",  .player2Name = "MCTS800",       .games =  512, .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800",       .player2Name = "GreedyPlayer",  .games =  128, .maxTurns = 2048},
+    MatchConfig{.player1Name = "GreedyPlayer",  .player2Name = "MCTS800",       .games =  128, .maxTurns = 2048},
 
-    MatchConfig{.player1Name = "MCTS1200",      .player2Name = "RandomPlayer",  .games =  128, .maxTurns = 2048},
-    MatchConfig{.player1Name = "RandomPlayer",  .player2Name = "MCTS1200",      .games =  128, .maxTurns = 2048},
-    MatchConfig{.player1Name = "MCTS1200",      .player2Name = "GreedyPlayer",  .games =  128, .maxTurns = 2048},
-    MatchConfig{.player1Name = "GreedyPlayer",  .player2Name = "MCTS1200",      .games =  128, .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200",      .player2Name = "RandomPlayer",  .games =   64, .maxTurns = 2048},
+    MatchConfig{.player1Name = "RandomPlayer",  .player2Name = "MCTS1200",      .games =   64, .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS1200",      .player2Name = "GreedyPlayer",  .games =   64, .maxTurns = 2048},
+    MatchConfig{.player1Name = "GreedyPlayer",  .player2Name = "MCTS1200",      .games =   64, .maxTurns = 2048},
 
     // clang-format on
 };
