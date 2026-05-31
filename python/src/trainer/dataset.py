@@ -9,6 +9,8 @@ CAPTURE_OFFSETS = np.arange(6, dtype=np.uint8)
 
 
 class InMemoryDuckDBDataset(Dataset):
+    """DuckDB-backed dataset kept in memory for fast repeated training passes."""
+
     def __init__(self, db_path: str, view_name: str, limit: int | None = None, dedupe_rows: bool = True):
         super().__init__()
 
@@ -59,27 +61,106 @@ class InMemoryDuckDBDataset(Dataset):
         return features, policy_target, value_target
 
 
+class ModuloSplitDataset(Dataset):
+    """Map positions to original dataset indices using an every-Nth-row validation split."""
+
+    def __init__(self, dataset: Dataset, validation_stride: int, split: str):
+        super().__init__()
+        if validation_stride < 2:
+            raise ValueError("validation_stride must be at least 2")
+        if split not in {"train", "validation"}:
+            raise ValueError("split must be 'train' or 'validation'")
+
+        self.dataset = dataset
+        self.validation_stride = validation_stride
+        self.split = split
+        self.validation_len = (len(dataset) + validation_stride - 1) // validation_stride
+        self.train_len = len(dataset) - self.validation_len
+
+    def __len__(self) -> int:
+        if self.split == "validation":
+            return self.validation_len
+        return self.train_len
+
+    def __getitem__(self, index: int) -> int:
+        if self.split == "validation":
+            original_index = index * self.validation_stride
+        else:
+            original_index = index + 1 + index // (self.validation_stride - 1)
+        return self.dataset[original_index]
+
+
+def validation_stride(validation_fraction: float) -> int | None:
+    """Return split stride for the requested validation fraction, or None when disabled."""
+    if validation_fraction < 0.0 or validation_fraction >= 0.5:
+        raise ValueError("validation_fraction must be in [0.0, 0.5)")
+    if validation_fraction == 0.0:
+        return None
+    return max(2, round(1.0 / validation_fraction))
+
+
+def split_dataset(dataset: Dataset, validation_fraction: float) -> tuple[Dataset, Dataset | None]:
+    """Split a dataset without materializing large index arrays."""
+    stride = validation_stride(validation_fraction)
+    if stride is None:
+        return dataset, None
+    return ModuloSplitDataset(dataset, stride, "train"), ModuloSplitDataset(dataset, stride, "validation")
+
+
+def make_loader(dataset: Dataset, batch_size: int, num_workers: int, pin_memory: bool, shuffle: bool, collate_fn):
+    """Create a DataLoader using project trainer defaults."""
+    return torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        collate_fn=collate_fn,
+    )
+
+
 def get_dataloaders(config):
+    """Build policy/value train and validation dataloaders."""
     policy_dataset = InMemoryDuckDBDataset(config.duckdb_path, "policy_data", dedupe_rows=config.dedupe_dataset_rows)
     value_dataset = InMemoryDuckDBDataset(config.duckdb_path, "value_data", dedupe_rows=config.dedupe_dataset_rows)
+    policy_train_dataset, policy_validation_dataset = split_dataset(policy_dataset, config.validation_fraction)
+    value_train_dataset, value_validation_dataset = split_dataset(value_dataset, config.validation_fraction)
 
-    # Use standard DataLoader with shuffle=True so PyTorch handles batching optimally
-    policy_loader = torch.utils.data.DataLoader(
-        policy_dataset,
-        batch_size=config.batch_size,
-        shuffle=True,
-        num_workers=config.num_workers,
-        pin_memory=True,  # Speeds up CPU to GPU transfer
-        collate_fn=policy_dataset.collate,
+    policy_loader = make_loader(
+        policy_train_dataset,
+        config.batch_size,
+        config.num_workers,
+        torch.cuda.is_available(),
+        True,
+        policy_dataset.collate,
+    )
+    value_loader = make_loader(
+        value_train_dataset,
+        config.batch_size,
+        config.num_workers,
+        torch.cuda.is_available(),
+        True,
+        value_dataset.collate,
     )
 
-    value_loader = torch.utils.data.DataLoader(
-        value_dataset,
-        batch_size=config.batch_size,
-        shuffle=True,
-        num_workers=config.num_workers,
-        pin_memory=True,
-        collate_fn=value_dataset.collate,
+    if policy_validation_dataset is None or value_validation_dataset is None:
+        return policy_loader, value_loader, None, None
+
+    policy_validation_loader = make_loader(
+        policy_validation_dataset,
+        config.batch_size,
+        config.num_workers,
+        torch.cuda.is_available(),
+        False,
+        policy_dataset.collate,
+    )
+    value_validation_loader = make_loader(
+        value_validation_dataset,
+        config.batch_size,
+        config.num_workers,
+        torch.cuda.is_available(),
+        False,
+        value_dataset.collate,
     )
 
-    return policy_loader, value_loader
+    return policy_loader, value_loader, policy_validation_loader, value_validation_loader
