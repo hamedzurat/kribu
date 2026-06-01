@@ -192,60 +192,144 @@ struct MoveList {
     flipped.me |= (1ULL << FLIP_MAP[std::countr_zero(bits)]);
   }
 
+  flipped.history = state.history;
+  flipped.historyCount = state.historyCount;
+
   flipped.hash = kribu::zobrist::compute_hash(
       {.activePlayer = flipped.me, .opponentPlayer = flipped.opp, .activeCaptureIdx = flipped.activeCaptureIdx});
   return flipped;
 }
 
 /**
+ * @brief Applies a move to the board state and returns the resulting board state.
+ * @note  No validity checks are performed. The caller must verify legitimacy beforehand.
+ * @param state  Current BoardState.
+ * @param moveId A valid move ID.
+ * @return Resulting BoardState.
+ */
+[[nodiscard]] constexpr boardState apply_move(const boardState& state, int moveId) noexcept {
+  boardState next = state;
+
+  if (moveId == END_CHAIN_MOVE) {
+    if (state.activeCaptureIdx != -1) {
+      next.hash ^= kribu::zobrist::KEYS.activeCapture[state.activeCaptureIdx];
+      next.hash ^= kribu::zobrist::KEYS.activeCapture[37];
+    }
+    next.activeCaptureIdx = -1;
+    next.historyCount = 0;
+    return next;
+  }
+
+  const move& mov = MOVE_TABLE[moveId];
+  next.me &= ~(1ULL << mov.from);
+  next.me |= (1ULL << mov.to);
+
+  // Update hash for moving active piece
+  next.hash ^= kribu::zobrist::KEYS.me[mov.from];
+  next.hash ^= kribu::zobrist::KEYS.me[mov.to];
+
+  if (is_capture_move(moveId)) {
+    next.opp &= ~(1ULL << mov.captured);
+    next.hash ^= kribu::zobrist::KEYS.opp[mov.captured];
+
+    i8 nextCaptureIdx = mov.to;
+
+    int oldCap = (state.activeCaptureIdx == -1) ? 37 : state.activeCaptureIdx;
+    int newCap = (nextCaptureIdx == -1) ? 37 : nextCaptureIdx;
+    next.hash ^= kribu::zobrist::KEYS.activeCapture[oldCap];
+    next.hash ^= kribu::zobrist::KEYS.activeCapture[newCap];
+
+    next.activeCaptureIdx = nextCaptureIdx;
+    next.historyCount = 0;
+  } else {
+    int oldCap = (state.activeCaptureIdx == -1) ? 37 : state.activeCaptureIdx;
+    next.hash ^= kribu::zobrist::KEYS.activeCapture[oldCap];
+    next.hash ^= kribu::zobrist::KEYS.activeCapture[37];
+
+    next.activeCaptureIdx = -1;
+
+    if (next.historyCount < 8) {
+      next.history[next.historyCount] = state.hash;
+      next.historyCount++;
+    } else {
+      for (int i = 0; i < 7; ++i) {
+        next.history[i] = next.history[i + 1];
+      }
+      next.history[7] = state.hash;
+    }
+  }
+
+  return next;
+}
+
+/**
+ * @brief Checks if a move results in a board state that violates threefold repetition rules.
+ * @param state  Current BoardState.
+ * @param moveId Move ID to check.
+ * @return True if the move is repetition-legal, false otherwise.
+ */
+[[nodiscard]] constexpr bool is_repetition_legal(const boardState& state, int moveId) noexcept {
+  boardState next = apply_move(state, moveId);
+  if (next.activeCaptureIdx == -1) {
+    next = flip_board(next);
+  }
+  int repetitions = 0;
+  for (u32 i = 0; i < state.historyCount; ++i) {
+    if (state.history[i] == next.hash) {
+      repetitions++;
+    }
+  }
+  return repetitions < 2;
+}
+
+/**
  * @brief Validates if a specific move ID is legal in the given board state.
- * @details Checks starting-piece ownership, target occupancy, and jump-capture rules.
+ * @details Checks starting-piece ownership, target occupancy, jump-capture rules, and repetition rules.
  *          If a capture chain is active, it enforces that only the capturing piece can move.
  * @param state  Current BoardState.
  * @param moveId Move ID to validate.
  * @return True if the move is legal, false otherwise.
  */
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 [[nodiscard]] constexpr bool is_valid(const boardState& state, int moveId) noexcept {
   if (moveId < 0 || moveId >= TOTAL_MOVE_COUNT) {
     return false;
   }
 
+  bool basicValid = false;
   if (state.activeCaptureIdx != -1) {
     if (moveId == END_CHAIN_MOVE) {
-      return true;
+      basicValid = true;
+    } else if (!is_capture_move(moveId)) {
+      basicValid = false;
+    } else {
+      const move& mov = MOVE_TABLE[moveId];
+      if (mov.from != state.activeCaptureIdx || (((state.me | state.opp) >> mov.to) & 1U) != 0U) {
+        basicValid = false;
+      } else {
+        basicValid = ((state.opp >> mov.captured) & 1U) != 0U;
+      }
     }
-    if (!is_capture_move(moveId)) {
-      return false;
+  } else {
+    if (moveId == END_CHAIN_MOVE) {
+      basicValid = false;
+    } else {
+      const move& mov = MOVE_TABLE[moveId];
+      if (((state.me >> mov.from) & 1U) == 0U || (((state.me | state.opp) >> mov.to) & 1U) != 0U) {
+        basicValid = false;
+      } else if (is_simple_move(moveId)) {
+        basicValid = true;
+      } else {
+        basicValid = ((state.opp >> mov.captured) & 1U) != 0U;
+      }
     }
-    const move& mov = MOVE_TABLE[moveId];
-    if (mov.from != state.activeCaptureIdx) {
-      return false;
-    }
-    // bitwise check: (state.me | state.opp) combined mask of all pieces.
-    // >> mov.to shifts target node bit to LSB position, & 1U checks if it is occupied (1) or empty (0).
-    if ((((state.me | state.opp) >> mov.to) & 1U) != 0U) {
-      return false;
-    }
-    // bitwise check: (state.opp >> mov.captured) & 1U checks if captured node has an opponent piece.
-    return ((state.opp >> mov.captured) & 1U) != 0U;
   }
 
-  if (moveId == END_CHAIN_MOVE) {
+  if (!basicValid) {
     return false;
   }
 
-  const move& mov = MOVE_TABLE[moveId];
-  // bitwise check: (state.me >> mov.from) & 1U checks if starting node contains own piece.
-  if (((state.me >> mov.from) & 1U) == 0U) {
-    return false;
-  }
-  if ((((state.me | state.opp) >> mov.to) & 1U) != 0U) {
-    return false;
-  }
-  if (is_simple_move(moveId)) {
-    return true;
-  }
-  return ((state.opp >> mov.captured) & 1U) != 0U;
+  return is_repetition_legal(state, moveId);
 }
 
 /**
@@ -285,7 +369,6 @@ struct MoveList {
 
   if (state.activeCaptureIdx != -1) {
     list.push(static_cast<i16>(END_CHAIN_MOVE));
-    // Cast to u8 first, then to int to prevent the bugprone-signed-char-misuse lint error.
     const int captureMoveCount =
         static_cast<int>(static_cast<u8>(BOARD_METADATA.captureMoveCountByNode[state.activeCaptureIdx]));
     for (int k = 0; k < captureMoveCount; ++k) {
@@ -303,61 +386,6 @@ struct MoveList {
     }
   }
   return list;
-}
-
-/**
- * @brief Applies a move to the board state and returns the resulting board state.
- * @note  No validity checks are performed. The caller must verify legitimacy beforehand.
- * @param state  Current BoardState.
- * @param moveId A valid move ID.
- * @return Resulting BoardState.
- */
-[[nodiscard]] constexpr boardState apply_move(const boardState& state, int moveId) noexcept {
-  boardState next = state;
-
-  if (moveId == END_CHAIN_MOVE) {
-    if (state.activeCaptureIdx != -1) {
-      next.hash ^= kribu::zobrist::KEYS.activeCapture[state.activeCaptureIdx];
-      next.hash ^= kribu::zobrist::KEYS.activeCapture[37];
-    }
-    next.activeCaptureIdx = -1;
-    return next;
-  }
-
-  const move& mov = MOVE_TABLE[moveId];
-  // bitwise operations:
-  // - ~(1ULL << mov.from) creates a mask of all 1s except a 0 at index mov.from.
-  // - &= clears the piece from its starting node in next.me.
-  next.me &= ~(1ULL << mov.from);
-  // - |= sets the bit at mov.to, putting the piece in its new position in next.me.
-  next.me |= (1ULL << mov.to);
-
-  // Update hash for moving active piece
-  next.hash ^= kribu::zobrist::KEYS.me[mov.from];
-  next.hash ^= kribu::zobrist::KEYS.me[mov.to];
-
-  if (is_capture_move(moveId)) {
-    // - clears the opponent's captured piece by anding with the bitwise negation of the captured index mask.
-    next.opp &= ~(1ULL << mov.captured);
-    next.hash ^= kribu::zobrist::KEYS.opp[mov.captured];
-
-    i8 nextCaptureIdx = mov.to;
-
-    int oldCap = (state.activeCaptureIdx == -1) ? 37 : state.activeCaptureIdx;
-    int newCap = (nextCaptureIdx == -1) ? 37 : nextCaptureIdx;
-    next.hash ^= kribu::zobrist::KEYS.activeCapture[oldCap];
-    next.hash ^= kribu::zobrist::KEYS.activeCapture[newCap];
-
-    next.activeCaptureIdx = nextCaptureIdx;
-  } else {
-    int oldCap = (state.activeCaptureIdx == -1) ? 37 : state.activeCaptureIdx;
-    next.hash ^= kribu::zobrist::KEYS.activeCapture[oldCap];
-    next.hash ^= kribu::zobrist::KEYS.activeCapture[37];
-
-    next.activeCaptureIdx = -1;
-  }
-
-  return next;
 }
 
 /**

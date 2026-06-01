@@ -142,9 +142,6 @@ std::string reason_to_string(WinReason reason) {
   if (reason == WinReason::INVALID_MOVE) {
     return "INVALID_MOVE";
   }
-  if (reason == WinReason::REPETITION) {
-    return "REPETITION";
-  }
   return "DRAW_MAX_TURNS";
 }
 
@@ -252,7 +249,6 @@ void initialize_duckdb(duckdb::Connection& con) {  // NOLINT(misc-include-cleane
       "reason              VARCHAR,"
       "total_turns         INTEGER,"
       "win_margin          INTEGER,"
-      "forced_random_turns INTEGER,"
       "mad_turns           INTEGER"
       ")");
 
@@ -289,9 +285,6 @@ bool game_exists(duckdb::Connection& con, int gameId) {
  */
 void insert_players(duckdb::Connection& con, const std::map<std::string, Player>& players) {
   con.Query(
-      "INSERT INTO players (name, player_type, depth, madness) VALUES ('ForcedRandom', 'forced_random', 0, 0) ON "
-      "CONFLICT (name) DO NOTHING");
-  con.Query(
       "INSERT INTO players (name, player_type, depth, madness) VALUES ('MadPlayer', 'mad_player', 0, 0) ON CONFLICT "
       "(name) DO NOTHING");
 
@@ -327,20 +320,17 @@ void db_writer_thread_func() {
     std::string reasonStr = reason_to_string(game.outcome.reason);
 
     int madTurnsCount = 0;
-    int forcedRandomTurnsCount = 0;
     for (const auto& rec : game.history) {
       if (rec.playerPlayed == "MadPlayer") {
         madTurnsCount++;
-      } else if (rec.playerPlayed == "ForcedRandom") {
-        forcedRandomTurnsCount++;
       }
     }
 
     {
       auto prep = con.Prepare(
           "INSERT INTO games (game_id, p1_name, p2_name, outcome, reason, total_turns, win_margin, "
-          "forced_random_turns, mad_turns) "
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+          "mad_turns) "
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
           "ON CONFLICT (game_id) DO NOTHING");
       prep->Execute(game.gameId,
                     game.p1Name,
@@ -349,7 +339,6 @@ void db_writer_thread_func() {
                     reasonStr,
                     static_cast<int>(game.history.size()),
                     game.outcome.winMargin,
-                    forcedRandomTurnsCount,
                     madTurnsCount);
     }
 

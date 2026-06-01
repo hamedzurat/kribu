@@ -2,9 +2,10 @@ import pytest
 import torch
 from torch.utils.data import Dataset
 
-from trainer.dataset import split_dataset, validation_stride
+from trainer.dataset import legal_move_mask, split_dataset, validation_stride
 from trainer.model import SholoGutiNet
 from trainer.train import (
+    apply_policy_mask,
     dataset_passes,
     is_improved,
     loss_total,
@@ -13,6 +14,7 @@ from trainer.train import (
     render_training_dashboard,
     resolve_steps_per_epoch,
 )
+from kribu import INITIAL_STATE, all_possible_moves
 
 
 class IndexDataset(Dataset):
@@ -63,6 +65,24 @@ def test_loss_and_improvement_helpers():
     assert loss_total(policy_loss=2.0, value_loss=0.25, value_loss_weight=2.0) == 2.5
     assert is_improved(metric=0.9, best_metric=1.0, min_improvement=0.01)
     assert not is_improved(metric=0.995, best_metric=1.0, min_improvement=0.01)
+
+
+def test_legal_move_mask_matches_engine_moves():
+    mask = legal_move_mask(INITIAL_STATE.me, INITIAL_STATE.opp, INITIAL_STATE.activeCaptureIdx, 265)
+    valid_moves = set(all_possible_moves(INITIAL_STATE))
+
+    assert {idx for idx, is_legal in enumerate(mask) if is_legal} == valid_moves
+
+
+def test_apply_policy_mask_keeps_target_and_blocks_invalid_logits():
+    logits = torch.tensor([[0.0, 10.0, 1.0]])
+    legal_mask = torch.tensor([[True, False, False]])
+    target = torch.tensor([2])
+
+    masked = apply_policy_mask(logits, legal_mask, target)
+
+    assert masked.argmax(dim=-1).item() == 2
+    assert masked[0, 1] < -1e20
 
 
 def test_metric_points_skips_nan_values():

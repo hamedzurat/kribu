@@ -57,12 +57,24 @@ struct boardState {
   u64 hash = 0;
 
   /**
+   * @brief Rolling history of the last 8 position hashes to detect repetitions.
+   */
+  std::array<u64, 8> history{};
+
+  /**
+   * @brief Count of valid hashes currently stored in the rolling history.
+   */
+  u8 historyCount = 0;
+
+  /**
    * @brief Compares two board states for exact equality of piece placements and capture states.
    * @param other The board state to compare against.
-   * @return True if both player masks and active capture indices are identical, false otherwise.
+   * @return True if both player masks, active capture indices, hashes, and histories are identical, false otherwise.
    */
   bool operator==(const boardState& other) const {
-    return hash == other.hash && me == other.me && opp == other.opp && activeCaptureIdx == other.activeCaptureIdx;
+    return hash == other.hash && me == other.me && opp == other.opp && activeCaptureIdx == other.activeCaptureIdx
+           && historyCount == other.historyCount
+           && std::equal(history.begin(), history.begin() + historyCount, other.history.begin());
   }
 };
 

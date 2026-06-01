@@ -12,9 +12,9 @@
 using namespace kribu::benchmark;
 
 /**
- * @brief Test case to verify forced random turns tracking during single game playback.
+ * @brief Test case to verify benchmark game play run simulation.
  */
-TEST_CASE("Benchmark - Forced Random Turns Tracking", "[benchmark]") {
+TEST_CASE("Benchmark - Game Run Simulation", "[benchmark]") {
   Player player1{.name = "P1", .select = kribu::player::select_random};
   Player player2{.name = "P2", .select = kribu::player::select_random};
 
@@ -23,12 +23,6 @@ TEST_CASE("Benchmark - Forced Random Turns Tracking", "[benchmark]") {
 
   const GameOutcome outcome = play_single_game(player1, player2, perf, 100, history);
 
-  int forcedRandomTurns = 0;
-  for (const auto& rec : history) {
-    if (rec.playerPlayed == "ForcedRandom") {
-      forcedRandomTurns++;
-    }
-  }
-  REQUIRE(forcedRandomTurns >= 0);
+  REQUIRE(!history.empty());
   REQUIRE(outcome.winMargin >= 0);
 }

@@ -1,4 +1,5 @@
 import duckdb
+import kribu
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -8,10 +9,32 @@ BITBOARD_OFFSETS = np.arange(37, dtype=np.uint64)
 CAPTURE_OFFSETS = np.arange(6, dtype=np.uint8)
 
 
+def legal_move_mask(me: int, opp: int, active_capture_idx: int, action_space: int) -> np.ndarray:
+    """Return a boolean action mask for legal moves in one board state."""
+    state = kribu.boardState()
+    state.me = int(me)
+    state.opp = int(opp)
+    state.activeCaptureIdx = int(active_capture_idx)
+
+    mask = np.zeros(action_space, dtype=np.bool_)
+    for moveId in kribu.all_possible_moves(state):
+        if 0 <= moveId < action_space:
+            mask[moveId] = True
+    return mask
+
+
 class InMemoryDuckDBDataset(Dataset):
     """DuckDB-backed dataset kept in memory for fast repeated training passes."""
 
-    def __init__(self, db_path: str, view_name: str, limit: int | None = None):
+    def __init__(
+        self,
+        db_path: str,
+        view_name: str,
+        limit: int | None = None,
+        *,
+        include_legal_mask: bool = False,
+        action_space: int = 265,
+    ):
         super().__init__()
 
         con = duckdb.connect(db_path, read_only=True)
@@ -27,6 +50,8 @@ class InMemoryDuckDBDataset(Dataset):
         self.active_capture_idx = data["active_capture_idx"].astype(np.int8, copy=False)
         self.policy_target = data.get("chosen_move")
         self.value_target = data.get("value_label")
+        self.include_legal_mask = include_legal_mask
+        self.action_space = action_space
 
         if self.policy_target is not None:
             self.policy_target = self.policy_target.astype(np.int64, copy=False)
@@ -39,7 +64,7 @@ class InMemoryDuckDBDataset(Dataset):
     def __getitem__(self, index: int) -> int:
         return index
 
-    def collate(self, indices: list[int]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def collate(self, indices: list[int]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]:
         idx = np.asarray(indices, dtype=np.int64)
         me_bits = ((self.me[idx, None] >> BITBOARD_OFFSETS) & np.uint64(1)).astype(np.float32, copy=False)
         opp_bits = ((self.opp[idx, None] >> BITBOARD_OFFSETS) & np.uint64(1)).astype(np.float32, copy=False)
@@ -57,7 +82,17 @@ class InMemoryDuckDBDataset(Dataset):
         else:
             value_target = torch.from_numpy(self.value_target[idx])
 
-        return features, policy_target, value_target
+        legal_mask = None
+        if self.include_legal_mask:
+            masks = [
+                legal_move_mask(self.me[row], self.opp[row], self.active_capture_idx[row], self.action_space)
+                for row in idx
+            ]
+            legal_mask = torch.from_numpy(np.stack(masks, axis=0))
+            if self.policy_target is not None:
+                legal_mask.scatter_(1, policy_target[:, None], True)
+
+        return features, policy_target, value_target, legal_mask
 
 
 class ModuloSplitDataset(Dataset):
@@ -120,7 +155,12 @@ def make_loader(dataset: Dataset, batch_size: int, num_workers: int, pin_memory:
 
 def get_dataloaders(config):
     """Build policy/value train and validation dataloaders."""
-    policy_dataset = InMemoryDuckDBDataset(config.duckdb_path, "policy_data")
+    policy_dataset = InMemoryDuckDBDataset(
+        config.duckdb_path,
+        "policy_data",
+        include_legal_mask=config.policy_legal_mask,
+        action_space=config.action_space,
+    )
     value_dataset = InMemoryDuckDBDataset(config.duckdb_path, "value_data")
     policy_train_dataset, policy_validation_dataset = split_dataset(policy_dataset, config.validation_fraction)
     value_train_dataset, value_validation_dataset = split_dataset(value_dataset, config.validation_fraction)

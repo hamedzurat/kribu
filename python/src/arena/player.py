@@ -65,7 +65,13 @@ class NeuralPlayer:
         self.model.load_state_dict(stateDict)
         self.model.eval()
 
-    def get_move(self, me_mask: int, opp_mask: int, active_capture_idx: int) -> tuple[int, float]:
+    def get_move(
+        self,
+        me_mask: int,
+        opp_mask: int,
+        active_capture_idx: int,
+        valid_moves: list[int] | None = None,
+    ) -> tuple[int, float]:
         """
         Runs inference on a given board state.
 
@@ -73,6 +79,7 @@ class NeuralPlayer:
             me_mask: The bitmask representing the active player's pieces.
             opp_mask: The bitmask representing the opponent's pieces.
             active_capture_idx: The node index of a piece currently in a capture sequence (-1 if none).
+            valid_moves: Optional legal move IDs. When provided, policy selection is masked to these moves.
 
         Returns:
             A tuple containing (best_move_index, win_probability).
@@ -99,7 +106,15 @@ class NeuralPlayer:
         with torch.no_grad():
             policy_logits, value = self.model(X_tensor)
 
-        best_move_idx = int(torch.argmax(policy_logits, dim=-1).item())
+        if valid_moves is not None:
+            if not valid_moves:
+                raise ValueError("valid_moves must not be empty when provided")
+            move_indices = torch.tensor(valid_moves, dtype=torch.long, device=self.device)
+            valid_logits = policy_logits[0, move_indices]
+            best_move_idx = int(move_indices[int(torch.argmax(valid_logits).item())].item())
+        else:
+            best_move_idx = int(torch.argmax(policy_logits, dim=-1).item())
+
         win_prob = float(value.item())
 
         return best_move_idx, win_prob

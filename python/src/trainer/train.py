@@ -216,10 +216,28 @@ def save_checkpoint(model, optimizer, scheduler, scaler, epoch: int, best_valida
     )
 
 
+def apply_policy_mask(
+    policy_logits: torch.Tensor,
+    legal_mask: torch.Tensor | None,
+    policy_target: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Mask policy logits so loss and accuracy only compare legal actions."""
+    if legal_mask is None:
+        return policy_logits
+
+    mask = legal_mask.to(device=policy_logits.device, dtype=torch.bool)
+    if policy_target is not None:
+        mask = mask.clone()
+        mask.scatter_(1, policy_target[:, None], True)
+    return policy_logits.masked_fill(~mask, torch.finfo(policy_logits.dtype).min)
+
+
 def move_batch_to_device(batch, device):
     """Move a trainer batch to the selected device."""
-    features, policy_target, value_target = batch
-    return features.to(device), policy_target.to(device), value_target.to(device)
+    features, policy_target, value_target, legal_mask = batch
+    if legal_mask is not None:
+        legal_mask = legal_mask.to(device)
+    return features.to(device), policy_target.to(device), value_target.to(device), legal_mask
 
 
 @torch.no_grad()
@@ -234,10 +252,13 @@ def evaluate(
     total_policy_loss = 0.0
     correct_policy = 0
     policy_samples = 0
-    for p_x, p_target, _ in policy_loader:
+    for p_x, p_target, _, p_legal_mask in policy_loader:
         p_x = p_x.to(device)
         p_target = p_target.to(device)
+        if p_legal_mask is not None:
+            p_legal_mask = p_legal_mask.to(device)
         p_logits, _ = model(p_x)
+        p_logits = apply_policy_mask(p_logits, p_legal_mask, p_target)
         total_policy_loss += policy_criterion(p_logits, p_target).item()
         correct_policy += int((p_logits.argmax(dim=-1) == p_target).sum().item())
         policy_samples += p_target.numel()
@@ -245,7 +266,7 @@ def evaluate(
     total_value_loss = 0.0
     total_value_abs_error = 0.0
     value_samples = 0
-    for v_x, _, v_target in value_loader:
+    for v_x, _, v_target, _ in value_loader:
         v_x = v_x.to(device)
         v_target = v_target.to(device)
         _, v_pred = model(v_x)
@@ -365,14 +386,13 @@ def train():
 
                 progress_step.reset(step_task)
                 for _ in range(steps_per_epoch):
-                    p_x, p_target, _ = next(policy_iter)
-                    v_x, _, v_target = next(value_iter)
-                    p_x, p_target, _ = move_batch_to_device((p_x, p_target, _), device)
-                    v_x, _, v_target = move_batch_to_device((v_x, _, v_target), device)
+                    p_x, p_target, _, p_legal_mask = move_batch_to_device(next(policy_iter), device)
+                    v_x, _, v_target, _ = move_batch_to_device(next(value_iter), device)
 
                     optimizer.zero_grad(set_to_none=True)
                     with torch.autocast(device_type=device.type, enabled=use_mixed_precision):
                         p_logits, _ = model(p_x)
+                        p_logits = apply_policy_mask(p_logits, p_legal_mask, p_target)
                         loss_p = policy_criterion(p_logits, p_target)
                         _, v_pred = model(v_x)
                         loss_v = value_criterion(v_pred, v_target)

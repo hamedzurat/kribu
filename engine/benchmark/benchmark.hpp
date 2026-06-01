@@ -44,7 +44,7 @@ struct TurnRecord {
   int chosenMove = -1;
 
   /**
-   * @brief Name of the player or special system (e.g. ForcedRandom, MadPlayer) that played this turn.
+   * @brief Name of the player or special system (e.g. MadPlayer) that played this turn.
    */
   std::string_view playerPlayed;
 };
@@ -59,7 +59,7 @@ enum class GameResult : u8 { P1_WINS, P2_WINS, DRAW };
  * @enum WinReason
  * @brief Represents the reason why a player won or the game ended.
  */
-enum class WinReason : u8 { ELIMINATION, STALEMATE, INVALID_MOVE, DRAW_MAX_TURNS, REPETITION };
+enum class WinReason : u8 { ELIMINATION, STALEMATE, INVALID_MOVE, DRAW_MAX_TURNS };
 
 /**
  * @struct GameOutcome
@@ -359,21 +359,12 @@ constexpr void advance_turn_state(boardState& state, bool& isP1Turn, const board
  * @brief Helper function to execute a single move and record metrics.
  * @return The move ID played, or -1 if invalid or error.
  */
-inline int execute_move(boardState& state,
-                        bool& isP1Turn,
-                        const Player& player1,
-                        const Player& player2,
-                        GamePerf& perf,
-                        bool forceRandom,
-                        bool& isMadMove) {
+inline int execute_move(
+    boardState& state, bool& isP1Turn, const Player& player1, const Player& player2, GamePerf& perf, bool& isMadMove) {
   int moveId = -1;
 
   auto startTime = std::chrono::high_resolution_clock::now();
-  if (forceRandom) {
-    moveId = kribu::player::select_random(state);
-  } else {
-    moveId = get_player_move(player1, player2, isP1Turn, state, isMadMove);
-  }
+  moveId = get_player_move(player1, player2, isP1Turn, state, isMadMove);
   auto endTime = std::chrono::high_resolution_clock::now();
   f64 elapsed{0.0};
   elapsed = std::chrono::duration<f64>(endTime - startTime).count();
@@ -386,26 +377,6 @@ inline int execute_move(boardState& state,
 
   advance_turn_state(state, isP1Turn, apply_move(state, moveId));
   return moveId;
-}
-
-/**
- * @brief Helper to count the occurrences of a board state hash in game history.
- */
-inline int count_repetitions(u64 hash, const std::vector<u64>& gameHistoryHashes) noexcept {
-  int repetitions = 0;
-  for (u64 prevHash : gameHistoryHashes) {
-    if (prevHash == hash) {
-      repetitions++;
-    }
-  }
-  return repetitions;
-}
-
-/**
- * @brief Helper to record history hash.
- */
-inline void record_history_hash(u64 hash, std::vector<u64>& gameHistoryHashes) noexcept {
-  gameHistoryHashes.push_back(hash);
 }
 
 /**
@@ -448,60 +419,6 @@ inline void set_win_margin(GameOutcome& outcome, const boardState& state, bool i
 }
 
 /**
- * @brief Computes the number of consecutive forced random turns to play to escape a repetition loop.
- */
-constexpr int calculate_forced_random_turns(int repetitions) noexcept {
-  // Option 1: Linear scaling
-  // return (repetitions - 1) * 2;
-
-  // Option 2: Quadratic scaling
-  return (repetitions - 1) * (repetitions - 1) * 2;
-
-  // Option 3: Exponential scaling (power of 2)
-  // return (1 << (repetitions - 1));
-
-  // Option 4: Constant scaling
-  return 4;
-}
-
-/**
- * @brief Checks if the number of repetitions has reached the limit.
- * @param repetitions The current repetition count.
- * @return True if the limit is reached, false otherwise.
- */
-inline bool is_repetition_limit_reached(int repetitions) noexcept {
-  return repetitions >= REPETITION_LIMIT - 1;
-}
-
-/**
- * @brief Handles the repetition limits and sets consecutive random turns if repetition occurs.
- * @param state The current board state.
- * @param gameHistoryHashes Record of Zobrist hashes in the current game.
- * @param forcedRandomTurnsLeft Reference to the counter of forced random turns.
- * @param outcome Reference to the GameOutcome to set in case of repetition limit.
- * @return True if repetition limit was reached and the game should end, false otherwise.
- */
-inline bool handle_repetition(const boardState& state,
-                              std::vector<u64>& gameHistoryHashes,
-                              i32& forcedRandomTurnsLeft,
-                              GameOutcome& outcome) noexcept {
-  i32 repetitions{0};
-  repetitions = count_repetitions(state.hash, gameHistoryHashes);
-  if (is_repetition_limit_reached(repetitions)) {
-    if (!ALLOW_REPETITION) {
-      outcome = GameOutcome{.result = GameResult::DRAW, .reason = WinReason::REPETITION};
-      return true;
-    }
-  }
-
-  if (repetitions >= 2 && ALLOW_REPETITION) {
-    forcedRandomTurnsLeft = std::max(forcedRandomTurnsLeft, calculate_forced_random_turns(repetitions));
-  }
-  record_history_hash(state.hash, gameHistoryHashes);
-  return false;
-}
-
-/**
  * @brief Executes a single turn of the game, including player move choice,
  * validation, and state progression.
  * @param state The current board state.
@@ -509,7 +426,6 @@ inline bool handle_repetition(const boardState& state,
  * @param player1 The first player.
  * @param player2 The second player.
  * @param perf Reference to performance accumulator.
- * @param forcedRandomTurnsLeft Reference to remaining consecutive random turns.
  * @param history Vector tracking the game turn history.
  * @param outcome Reference to the output game outcome if the game finishes this turn.
  * @return True if the game is completed on this turn, false if it continues.
@@ -519,7 +435,6 @@ inline bool play_single_turn(boardState& state,
                              const Player& player1,
                              const Player& player2,
                              GamePerf& perf,
-                             i32& forcedRandomTurnsLeft,
                              std::vector<TurnRecord>& history,
                              GameOutcome& outcome) {
   const GameStatus status = get_game_status(state);
@@ -531,16 +446,11 @@ inline bool play_single_turn(boardState& state,
 
   TurnRecord record{.state = state, .isP1Turn = isP1Turn, .chosenMove = -1, .playerPlayed = ""};
 
-  const bool forceRandom = (forcedRandomTurnsLeft > 0);
-  if (forcedRandomTurnsLeft > 0) {
-    forcedRandomTurnsLeft--;
-  }
-
   const bool playerWasP1 = isP1Turn;
   const std::string_view playerNameBeforeMove = playerWasP1 ? player1.name : player2.name;
 
   bool isMadMove = false;
-  const i32 moveId = execute_move(state, isP1Turn, player1, player2, perf, forceRandom, isMadMove);
+  const i32 moveId = execute_move(state, isP1Turn, player1, player2, perf, isMadMove);
   if (moveId == -1) {
     outcome = handle_invalid_move(isP1Turn);
     set_win_margin(outcome, state, isP1Turn);
@@ -548,9 +458,7 @@ inline bool play_single_turn(boardState& state,
   }
 
   record.chosenMove = moveId;
-  if (forceRandom) {
-    record.playerPlayed = "ForcedRandom";
-  } else if (isMadMove) {
+  if (isMadMove) {
     record.playerPlayed = "MadPlayer";
   } else {
     record.playerPlayed = playerNameBeforeMove;
@@ -573,21 +481,13 @@ inline GameOutcome play_single_game(
   boardState state = INITIAL_STATE;
   i32 turnCount = 0;
   bool isP1Turn = true;
-  i32 forcedRandomTurnsLeft = 0;
-
-  std::vector<u64> gameHistoryHashes;
-  gameHistoryHashes.reserve(static_cast<usize>(maxTurns));
 
   history.clear();
   history.reserve(static_cast<usize>(maxTurns));
 
   while (turnCount < maxTurns) {
     GameOutcome outcome;
-    if (handle_repetition(state, gameHistoryHashes, forcedRandomTurnsLeft, outcome)) {
-      return outcome;
-    }
-
-    if (play_single_turn(state, isP1Turn, player1, player2, perf, forcedRandomTurnsLeft, history, outcome)) {
+    if (play_single_turn(state, isP1Turn, player1, player2, perf, history, outcome)) {
       return outcome;
     }
     turnCount++;

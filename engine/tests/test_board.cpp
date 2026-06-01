@@ -361,3 +361,103 @@ TEST_CASE("Rule Engine - Game Status", "[rules]") {  // NOLINT(readability-funct
     REQUIRE(get_game_status(INITIAL_STATE) == GameStatus::ONGOING);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Rule engine — rolling history and repetition legality
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Rule Engine - Rolling History and Repetition",  // NOLINT(readability-function-cognitive-complexity)
+          "[rules]") {
+  boardState state = INITIAL_STATE;
+
+  // Initial state should have empty history
+  REQUIRE(state.historyCount == 0);
+
+  // Apply a slide move (21 -> 16)
+  int move1 = find_move(21, 16);
+  REQUIRE(move1 != -1);
+  boardState state2 = apply_move(state, move1);
+
+  // Since it was a simple slide move and turn ended, it should record state.hash in history
+  REQUIRE(state2.historyCount == 1);
+  REQUIRE(state2.history[0] == state.hash);
+
+  // Flip board propagates history
+  boardState state2Flipped = flip_board(state2);
+  REQUIRE(state2Flipped.historyCount == 1);
+  REQUIRE(state2Flipped.history[0] == state.hash);
+
+  // Verify that capture moves clear history:
+  int capMoveId = -1;
+  for (int i = 1; i < TOTAL_MOVE_COUNT; ++i) {
+    if (is_capture_move(i)) {
+      capMoveId = i;
+      break;
+    }
+  }
+  REQUIRE(capMoveId != -1);
+
+  // Set up checkState with some history
+  boardState checkState = INITIAL_STATE;
+  checkState.history[0] = 0x1111ULL;
+  checkState.history[1] = 0x2222ULL;
+  checkState.historyCount = 2;
+
+  boardState capturedState = apply_move(checkState, capMoveId);
+  REQUIRE(capturedState.historyCount == 0);  // Capture resets history!
+
+  // Deterministic back-and-forth cycle test:
+  // State 0 (INITIAL_STATE) -> P1 forward -> State 1
+  // State 1 -> P2 forward -> State A (P1's turn)
+  // State A -> P1 backward -> State 3
+  // State 3 -> P2 backward -> State 0 again (P1's turn)
+  int m_forward = find_move(21, 16);
+  int m_backward = find_move(16, 21);
+
+  boardState state0 = INITIAL_STATE;
+
+  // Turn 1
+  boardState state1 = flip_board(apply_move(state0, m_forward));
+  boardState state2_turn1 = flip_board(apply_move(state1, m_forward));  // Back to State A
+
+  // Turn 2
+  boardState state3 = flip_board(apply_move(state2_turn1, m_backward));
+  boardState state4 = flip_board(apply_move(state3, m_backward));  // Back to INITIAL_STATE (2nd visit)
+
+  // Turn 3
+  boardState state5 = flip_board(apply_move(state4, m_forward));
+  boardState state6 = flip_board(apply_move(state5, m_forward));  // Back to State A (2nd visit)
+
+  // Turn 4
+  boardState state7 = flip_board(apply_move(state6, m_backward));
+  REQUIRE_FALSE(is_valid(state7, m_backward));
+  boardState state8 = flip_board(apply_move(state7, m_backward));  // Back to INITIAL_STATE (3rd visit)
+
+  // Turn 5
+  boardState state9 = flip_board(apply_move(state8, m_forward));
+  boardState state10 = flip_board(apply_move(state9, m_forward));  // Back to State A (3rd visit)
+
+  // At state10, State A's hash occurs twice in the history window of size 8.
+  // Playing the backward move would recreate state s11 (flipped hash = s11.hash = state3.hash).
+  // Let's verify that state3.hash (the state we would transition to) occurs twice in state10's history.
+  int repetitions = 0;
+  for (u32 i = 0; i < state10.historyCount; ++i) {
+    if (state10.history[i] == state3.hash) {
+      repetitions++;
+    }
+  }
+  REQUIRE(repetitions == 2);
+
+  // Since it already occurred twice, playing m_backward from state10 must be illegal!
+  REQUIRE_FALSE(is_valid(state10, m_backward));
+
+  // Let's verify that a repeat older than 8 positions is allowed.
+  // Pad the history of state10 with a unique dummy hash so the oldest history entry is dropped.
+  boardState state10_padded = state10;
+  for (int k = 0; k < 8; ++k) {
+    // Fill history with dummy values to push the original occurrences out of the window
+    state10_padded.history[k] = 0x9999ULL + k;
+  }
+  // Now, repetitions of state3.hash in history is 0, so the move becomes legal again!
+  REQUIRE(is_valid(state10_padded, m_backward));
+}

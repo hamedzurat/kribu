@@ -4,6 +4,7 @@
  */
 
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/array.h>
 #include <nanobind/stl/vector.h>
 
 #include <kribu/board.hpp>
@@ -68,6 +69,8 @@ NB_MODULE(kribu_ext, module) {  // NOLINT(readability-identifier-length, moderni
       .def_rw("opp", &boardState::opp)
       .def_rw("activeCaptureIdx", &boardState::activeCaptureIdx)
       .def_rw("hash", &boardState::hash)
+      .def_rw("history", &boardState::history)
+      .def_rw("historyCount", &boardState::historyCount)
       .def("__eq__", &boardState::operator==);
 
   nb::class_<move>(module, "move")

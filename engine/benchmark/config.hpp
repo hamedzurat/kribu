@@ -10,18 +10,6 @@
 
 namespace kribu::benchmark {
 
-/**
- * @brief Configurable limit for threefold (or N-fold) repetition detection.
- * @details Set to 0 to disable repetition detection.
- */
-inline constexpr int REPETITION_LIMIT = 4;
-
-/**
- * @brief If true, repetitions are resolved by playing a random valid move instead of drawing.
- * If false, repetitions immediately trigger a game DRAW.
- */
-inline constexpr bool ALLOW_REPETITION = true;
-
 struct MatchConfig {
   /**
    * @brief Name of Player 1.
@@ -85,7 +73,7 @@ inline constexpr int THREAD_COUNT = 32;
  *
  *    Post-processing:
  *      - Filter by playerPlayed.
- *      - Exclude moves made by "ForcedRandom" / "MadPlayer".
+ *      - Exclude moves made by "MadPlayer".
  *      - Keep only moves made by the underlying strong policy.
  *
  *  VALUE matchups (~35,800 games)

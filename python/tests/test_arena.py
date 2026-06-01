@@ -32,3 +32,25 @@ def test_neural_player_dynamic_architecture(tmp_path):
     # Assert model was instantiated with the auto-detected architecture
     assert player.model.input_proj[0].out_features == 128
     assert len(player.model.blocks) == 3
+
+
+def test_neural_player_selects_best_valid_move(tmp_path):
+    model = SholoGutiNet(input_features=80, hidden_dim=32, num_residual_blocks=1, action_space=265)
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.zero_()
+        model.policy_head[3].bias[1] = 1.0
+        model.policy_head[3].bias[3] = 5.0
+
+    modelPath = os.path.join(tmp_path, "masked_model.pt")
+    torch.save(model.state_dict(), modelPath)
+
+    player = NeuralPlayer(model_path=modelPath, device="cpu")
+    move_id, _ = player.get_move(
+        INITIAL_STATE.me,
+        INITIAL_STATE.opp,
+        INITIAL_STATE.activeCaptureIdx,
+        valid_moves=[1],
+    )
+
+    assert move_id == 1

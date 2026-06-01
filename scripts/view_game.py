@@ -150,7 +150,7 @@ def select_game_from_duckdb(console: Console) -> int:
 
     con = duckdb.connect(db_path)
     rows = con.execute(
-        "SELECT game_id, p1_name, p2_name, outcome, reason, total_turns, win_margin, forced_random_turns FROM games"
+        "SELECT game_id, p1_name, p2_name, outcome, reason, total_turns, win_margin FROM games"
     ).fetchall()
 
     if not rows:
@@ -170,7 +170,6 @@ def select_game_from_duckdb(console: Console) -> int:
                 "reason": row[4],
                 "totalTurns": str(row[5]),
                 "winMargin": str(row[6]),
-                "forcedRandomTurns": str(row[7]),
             }
         )
 
@@ -187,7 +186,6 @@ def select_game_from_duckdb(console: Console) -> int:
         "STALEMATE": "STAL",
         "INVALID_MOVE": "INVL",
         "DRAW_MAX_TURNS": "DRAW",
-        "REPETITION": "REPT",
     }
 
     for col_idx in range(num_cols):
@@ -203,12 +201,10 @@ def select_game_from_duckdb(console: Console) -> int:
         table.add_column("Reason", style="blue")
         table.add_column("Turns", justify="right", style="white")
         table.add_column("Win", justify="right", style="yellow")
-        table.add_column("Rnd", justify="right", style="magenta")
 
         for idx in range(start_idx, end_idx):
             g = games[idx]
             win_by = g.get("winMargin", "0") if g.get("outcome") != "DRAW" else "-"
-            forced_rnd = g.get("forcedRandomTurns", "0")
             short_reason = reason_map.get(g["reason"], g["reason"])
 
             if g["outcome"] == "P1_WINS":
@@ -225,7 +221,6 @@ def select_game_from_duckdb(console: Console) -> int:
                 short_reason,
                 g["totalTurns"],
                 win_by,
-                forced_rnd,
             )
         tables.append(table)
 
@@ -276,7 +271,7 @@ def main():
 
     # Query game metadata
     game_row = con.execute(
-        "SELECT p1_name, p2_name, outcome, reason, total_turns, win_margin, forced_random_turns FROM games WHERE game_id = ?",
+        "SELECT p1_name, p2_name, outcome, reason, total_turns, win_margin FROM games WHERE game_id = ?",
         [game_id],
     ).fetchone()
 
@@ -284,7 +279,7 @@ def main():
         console.print(f"[bold red]Error: Game ID {game_id} not found in database.[/bold red]")
         sys.exit(1)
 
-    p1_name, p2_name, outcome_int, reason, total_turns, win_margin, forced_random_turns = game_row
+    p1_name, p2_name, outcome_int, reason, total_turns, win_margin = game_row
     outcome_map = {0: "P1_WINS", 1: "P2_WINS", 2: "DRAW"}
     outcome = outcome_map.get(outcome_int, "DRAW")
 
@@ -354,7 +349,6 @@ def main():
 
         info_table.add_row("Turn/Ply Index:", f"{turn_idx + 1} / {actual_length}")
         info_table.add_row("Total Turns (Game):", f"[bold white]{total_turns}[/bold white]")
-        info_table.add_row("Forced Random Plays:", f"[bold magenta]{forced_random_turns}[/bold magenta]")
 
         info_table.add_row(
             "Active Turn:", f"[bold {active_player_color}]{active_player_name}[/bold {active_player_color}]"

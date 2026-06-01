@@ -52,21 +52,9 @@ def make_dashboard(games_played, args, model_wins, opp_wins, draws, current_game
     layout.split_column(Layout(name="header", size=4), Layout(name="main", ratio=1), Layout(name="footer", size=3))
 
     # Count draw reasons dynamically from history_log for detailed top bar summary
-    draw_rep_model = sum(1 for gh in history_log if gh["winner"] == "draw" and gh["reason"] == "repetition_by_model")
-    draw_rep_opp = sum(
-        1
-        for gh in history_log
-        if gh["winner"] == "draw"
-        and gh["reason"].startswith("repetition_by_")
-        and gh["reason"] != "repetition_by_model"
-    )
     draw_max_turns = sum(1 for gh in history_log if gh["winner"] == "draw" and gh["reason"] == "max_turns")
 
     draw_details = []
-    if draw_rep_model > 0:
-        draw_details.append(f"model repeat: {draw_rep_model}")
-    if draw_rep_opp > 0:
-        draw_details.append(f"opp repeat: {draw_rep_opp}")
     if draw_max_turns > 0:
         draw_details.append(f"max turns: {draw_max_turns}")
 
@@ -76,7 +64,7 @@ def make_dashboard(games_played, args, model_wins, opp_wins, draws, current_game
     win_rate = (model_wins / games_played * 100) if games_played > 0 else 0.0
     header_text = (
         f"[bold yellow]SHOLO GUTI ARENA[/bold yellow] | Model: [green]{args.model_path}[/green] | Opponent: [red]{args.opponent.upper()}[/red] | Games: [cyan]{games_played}/{args.games}[/cyan] | Max Turns: [magenta]{args.max_turns}[/magenta]\n"
-        f"Model Win Rate: [bold green]{win_rate:.1f}%[/bold green] | Record: [green]{model_wins}[/green]-[red]{opp_wins}[/red]-[white]{draws}{draw_details_str}[/white] | Force Random: [yellow]{args.force_random}[/yellow] | CSV: [white]{args.csv_path}[/white]"
+        f"Model Win Rate: [bold green]{win_rate:.1f}%[/bold green] | Record: [green]{model_wins}[/green]-[red]{opp_wins}[/red]-[white]{draws}{draw_details_str}[/white] | CSV: [white]{args.csv_path}[/white]"
     )
     header_panel = Panel(
         header_text,
@@ -137,7 +125,7 @@ def make_dashboard(games_played, args, model_wins, opp_wins, draws, current_game
         BarColumn(bar_width=None),
         TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
     )
-    task_id = progress_bar.add_task("Match Progress", completed=games_played, total=args.games)
+    _ = progress_bar.add_task("Match Progress", completed=games_played, total=args.games)
     layout["footer"].update(Panel(progress_bar, border_style="cyan"))
 
     return layout
@@ -160,9 +148,6 @@ def main():
     parser.add_argument("--max-turns", "-t", type=int, default=1024, help="Max turns per game.")
     parser.add_argument(
         "--csv-path", "-c", type=str, default="arena_results.csv", help="Path to save results CSV file."
-    )
-    parser.add_argument(
-        "--force-random", action="store_true", help="Enable forced random moves during repetition cycles."
     )
 
     args = parser.parse_args()
@@ -223,14 +208,8 @@ def main():
                 model_pieces = 16
                 opp_pieces = 16
 
-                # Track state hashes to detect repetition draws
-                game_history_hashes = [state.hash]
-
                 # Track moves played in the current game
                 moves_played = []
-
-                # Track forced random turns left
-                forced_random_turns_left = 0
 
                 while True:
                     # Check status
@@ -246,7 +225,6 @@ def main():
                         break
 
                     # Count pieces from active perspective
-                    # state.me is active player's pieces, state.opp is opponent's pieces
                     p_me = count_bits(state.me)
                     p_opp = count_bits(state.opp)
                     if is_model_turn:
@@ -286,23 +264,15 @@ def main():
                         turn_idx += 1
                         continue
 
-                    # Determine if this turn is forced to play randomly
-                    is_forced_random = args.force_random and (forced_random_turns_left > 0)
-                    if is_forced_random:
-                        forced_random_turns_left -= 1
-
                     # Player makes move selection
-                    if is_forced_random:
-                        move_idx = random.choice(valid_moves)
-                    elif is_model_turn:
-                        # Model chooses move using NN policy
+                    if is_model_turn:
+                        # Model chooses move using NN policy with policy masking
                         move_idx, _ = player.get_move(
-                            me_mask=state.me, opp_mask=state.opp, active_capture_idx=state.activeCaptureIdx
+                            me_mask=state.me,
+                            opp_mask=state.opp,
+                            active_capture_idx=state.activeCaptureIdx,
+                            valid_moves=valid_moves,
                         )
-                        # Masking: choose the best valid move index if the argmax is not legal
-                        if move_idx not in valid_moves:
-                            # Fallback to first valid move
-                            move_idx = valid_moves[0]
                     else:
                         # Opponent selection
                         if args.opponent == "minimax":
@@ -314,7 +284,6 @@ def main():
                         else:
                             move_idx = random.choice(valid_moves)
 
-                        # Just in case C++ player returns an invalid move, fallback:
                         if move_idx not in valid_moves:
                             move_idx = valid_moves[0]
 
@@ -328,30 +297,13 @@ def main():
                         if m.captured != -1:
                             last_move_str += f" (Capture {m.captured})"
 
-                        if is_forced_random:
-                            move_short_str = f"[yellow]Rnd:{m.fromNode}->{m.toNode}[/yellow]"
-                        else:
-                            player_color = "green" if is_model_turn else "red"
-                            move_short_str = f"[{player_color}]{m.fromNode}->{m.toNode}[/{player_color}]"
+                        player_color = "green" if is_model_turn else "red"
+                        move_short_str = f"[{player_color}]{m.fromNode}->{m.toNode}[/{player_color}]"
 
                     moves_played.append(move_short_str)
 
-                    # Apply move
+                    # Apply move (this also automatically appends hash history inside apply_move C++)
                     next_state = kribu.apply_move(state, move_idx)
-
-                    # Check for repetition: if this hash is already in the game history twice,
-                    # adding it would be the 3rd time (repetition limit reached)
-                    repetitions = game_history_hashes.count(next_state.hash)
-                    if repetitions >= 2:
-                        if args.force_random:
-                            forced_random_turns_left = max(
-                                forced_random_turns_left, (repetitions - 1) * (repetitions - 1) * 2
-                            )
-                        else:
-                            winner = "draw"
-                            reason = f"repetition_by_{'model' if is_model_turn else args.opponent}"
-                            break
-                    game_history_hashes.append(next_state.hash)
 
                     # Transition turn
                     if next_state.activeCaptureIdx == -1:
@@ -402,7 +354,7 @@ def main():
                         game_idx, args, model_wins, opp_wins, draws, game_idx, current_game_info, history_log
                     )
                 )
-                time.sleep(0.5)  # Brief pause between games to allow visual review
+                time.sleep(0.5)
 
         console.print("\n[bold green]Arena evaluation completed successfully![/bold green]")
         console.print(f"Results saved to [bold yellow]{args.csv_path}[/bold yellow].")
