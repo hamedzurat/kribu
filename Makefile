@@ -1,4 +1,4 @@
-.PHONY: setup build hot-build test test-cpp test-python clean format lint run benchmark view-benchmark view consolidate-dataset generate train todo
+.PHONY: setup build hot-build test test-cpp test-python clean format lint run benchmark view-benchmark view consolidate-dataset generate extract-data train todo
 
 # Detect number of processors for parallel execution
 NPROC := $(shell nproc)
@@ -44,7 +44,7 @@ generate:
 	PYTHONPATH=python/src uv run python python/src/kribu/generate_dataset.py --games 50 --output dataset.parquet --depth 4
 
 extract-data:
-	PYTHONPATH=python/src uv run ruff check python scripts/create_training_duckdb.py
+	PYTHONPATH=python/src uv run python scripts/create_training_duckdb.py
 
 train:
 	PYTHONPATH=python/src uv run python -m trainer
@@ -76,4 +76,3 @@ doc:
 
 doc-view: doc
 	uv run python scripts/view_docs.py
-
