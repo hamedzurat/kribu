@@ -728,7 +728,7 @@ inline void store_tt_result(
                                                      i32 beta,
                                                      const OrderedMoveList& ordered,
                                                      SearchContext& ctx) noexcept {
-  int bestMoveId = -1;
+  int bestMoveId = ordered.count > 0 ? ordered.moves[0] : -1;
   i32 bestScore = -INFINITY_VAL - 10000;
 
   for (int i = 0; i < ordered.count; ++i) {
@@ -937,7 +937,7 @@ template <int Depth>
   }
 
   MinimaxResult res = iterative_deepening(state, Depth, ctx);
-  if (tt_move_is_usable(state, res.moveId)) {
+  if (res.moveId != -1 && sholoGuti::is_valid(state, res.moveId)) {
     return res.moveId;
   }
 

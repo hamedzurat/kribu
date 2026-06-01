@@ -461,3 +461,25 @@ TEST_CASE("Rule Engine - Rolling History and Repetition",  // NOLINT(readability
   // Now, repetitions of state3.hash in history is 0, so the move becomes legal again!
   REQUIRE(is_valid(state10_padded, m_backward));
 }
+
+// ---------------------------------------------------------------------------
+// Rule engine — compute_flipped_hash optimization
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Rule Engine - Flipped Hash Optimization", "[rules]") {
+  boardState state = INITIAL_STATE;
+  REQUIRE(compute_flipped_hash(state) == flip_board(state).hash);
+
+  int moveId = find_move(21, 16);
+  REQUIRE(moveId != -1);
+  boardState next = apply_move(state, moveId);
+  REQUIRE(compute_flipped_hash(next) == flip_board(next).hash);
+
+  // Test states with active captures
+  boardState capState = INITIAL_STATE;
+  capState.activeCaptureIdx = 8;
+  REQUIRE(compute_flipped_hash(capState) == flip_board(capState).hash);
+
+  capState.activeCaptureIdx = -1;
+  REQUIRE(compute_flipped_hash(capState) == flip_board(capState).hash);
+}

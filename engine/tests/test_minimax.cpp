@@ -9,6 +9,7 @@
 #include <kribu/player/minimax.hpp>
 #include <kribu/rules.hpp>
 #include <kribu/transposition_table.hpp>
+#include <kribu/types.hpp>
 
 using namespace kribu::board;
 using namespace kribu::player;
@@ -134,7 +135,9 @@ TEST_CASE("Minimax ignores invalid TT move at root", "[minimax]") {
   REQUIRE(is_valid(state, res.moveId));
 }
 
-TEST_CASE("Minimax rejects stale TT move when repetition history differs", "[minimax]") {
+TEST_CASE(  // NOLINT(readability-function-cognitive-complexity)
+    "Minimax rejects stale TT move when repetition history differs",
+    "[minimax]") {
   const int mBackward = find_move(16, 21);
   REQUIRE(mBackward != -1);
 
@@ -175,4 +178,14 @@ TEST_CASE("Minimax player maker stays legal through repetition cycle", "[minimax
     }
     (void) isP1Turn;
   }
+}
+
+TEST_CASE("Minimax player maker fallback on -1 moveId", "[minimax]") {
+  boardState state = INITIAL_STATE;
+
+  // Verify that minimax_player_maker never returns -1 if there are legal moves,
+  // and that the returned move is always legal.
+  int moveId = minimax_player_maker<3>(state);
+  REQUIRE(moveId != -1);
+  REQUIRE(is_valid(state, moveId));
 }

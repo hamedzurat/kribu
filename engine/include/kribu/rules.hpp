@@ -263,6 +263,24 @@ struct MoveList {
 }
 
 /**
+ * @brief Computes the Zobrist hash of a flipped board state directly without full board construction.
+ * @param state Current BoardState.
+ * @return Flipped board state hash.
+ */
+[[nodiscard]] constexpr u64 compute_flipped_hash(const boardState& state) noexcept {
+  u64 hash = 0;
+  for (u64 bits = state.me; bits != 0U; bits &= bits - 1) {
+    hash ^= kribu::zobrist::KEYS.opp[36 - std::countr_zero(bits)];
+  }
+  for (u64 bits = state.opp; bits != 0U; bits &= bits - 1) {
+    hash ^= kribu::zobrist::KEYS.me[36 - std::countr_zero(bits)];
+  }
+  int capIdx = (state.activeCaptureIdx == -1) ? 37 : (36 - state.activeCaptureIdx);
+  hash ^= kribu::zobrist::KEYS.activeCapture[capIdx];
+  return hash;
+}
+
+/**
  * @brief Checks if a move results in a board state that violates threefold repetition rules.
  * @param state  Current BoardState.
  * @param moveId Move ID to check.
@@ -270,12 +288,15 @@ struct MoveList {
  */
 [[nodiscard]] constexpr bool is_repetition_legal(const boardState& state, int moveId) noexcept {
   boardState next = apply_move(state, moveId);
+  u64 nextHash = 0;
   if (next.activeCaptureIdx == -1) {
-    next = flip_board(next);
+    nextHash = compute_flipped_hash(next);
+  } else {
+    nextHash = next.hash;
   }
   int repetitions = 0;
   for (u32 i = 0; i < state.historyCount; ++i) {
-    if (state.history[i] == next.hash) {
+    if (state.history[i] == nextHash) {
       repetitions++;
     }
   }

@@ -12,7 +12,6 @@
 #include <thread>
 #include <vector>
 
-#include "config.hpp"
 #include "kribu/board.hpp"
 #include "kribu/player/random.hpp"
 #include "kribu/rules.hpp"
@@ -396,8 +395,8 @@ constexpr GameOutcome handle_game_over(GameStatus status, bool isP1Turn) noexcep
  * @brief Helper to handle invalid move scenario.
  */
 constexpr GameOutcome handle_invalid_move(bool isP1Turn) noexcept {
-  GameResult res = isP1Turn ? GameResult::P2_WINS : GameResult::P1_WINS;
-  return GameOutcome{.result = res, .reason = WinReason::INVALID_MOVE};
+  (void) isP1Turn;
+  return GameOutcome{.result = GameResult::DRAW, .reason = WinReason::INVALID_MOVE};
 }
 
 /**

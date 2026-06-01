@@ -95,14 +95,12 @@ def create_value_data(con: duckdb.DuckDBPyConnection, *, keepDuplicates: bool) -
                 t.is_p1_turn,
                 g.outcome
             FROM source.turns AS t
+            JOIN source.players AS actor ON t.player_played = actor.name
             JOIN source.games AS g ON t.game_id = g.game_id
-            JOIN source.players AS p1 ON g.p1_name = p1.name
-            JOIN source.players AS p2 ON g.p2_name = p2.name
             WHERE
                 g.reason != 'INVALID_MOVE'
                 AND t.player_played != 'MadPlayer'
-                AND p1.player_type IN ('minimax', 'mcts')
-                AND p2.player_type IN ('minimax', 'mcts')
+                AND actor.player_type IN ('minimax', 'mcts')
         )
         SELECT {distinct}
             me,

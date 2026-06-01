@@ -92,7 +92,7 @@ def test_build_training_duckdb_materializes_only_randomized_training_tables(tmp_
     policyCount, valueCount = create_training_duckdb.build_training_duckdb(sourcePath, outputPath)
 
     assert policyCount == 2
-    assert valueCount == 2
+    assert valueCount == 3
 
     con = duckdb.connect(str(outputPath), read_only=True)
     try:
@@ -104,4 +104,4 @@ def test_build_training_duckdb_materializes_only_randomized_training_tables(tmp_
 
     assert sorted(tableName for (tableName,) in tables) == ["policy_data", "value_data"]
     assert sorted(policyRows) == sorted([(10, 20, -1, 11), (30, 40, 0, 12)])
-    assert sorted(valueRows) == sorted([(10, 20, -1, 1.0), (30, 40, 0, 1.0)])
+    assert sorted(valueRows) == sorted([(10, 20, -1, 1.0), (30, 40, 0, 1.0), (50, 60, 1, 1.0)])
