@@ -231,7 +231,7 @@ GameWriterQueue gameQueue;
 }  // namespace
 
 /**
- * @brief Initializes the DuckDB database schema and creates games, players, and turns tables/views.
+ * @brief Initializes the DuckDB database schema and creates games, players, and turns tables.
  * @param con Reference to the DuckDB connection.
  */
 void initialize_duckdb(duckdb::Connection& con) {  // NOLINT(misc-include-cleaner)
@@ -269,108 +269,6 @@ void initialize_duckdb(duckdb::Connection& con) {  // NOLINT(misc-include-cleane
       "PRIMARY KEY (game_id, turn_idx),"
       "FOREIGN KEY (player_played) REFERENCES players(name)"
       ")");
-
-  /**
-   * @brief Creates the supervised policy dataset view.
-   *
-   * @details The active view keeps high-quality Minimax/MCTS decisions from normal and
-   * Mad-variant games, because Mad variants create useful state diversity while the
-   * actual random override turns are recorded separately as "MadPlayer". The view
-   * removes explicit "MadPlayer" and "ForcedRandom" turns, removes Random/Greedy
-   * games, and also removes the turn immediately before a "ForcedRandom" turn because
-   * that move is the likely repetition-causing decision.
-   *
-   * For a stricter experiment that discards any game that ever needed repetition
-   * escape, uncomment the `g.forced_random_turns = 0` predicate below in both
-   * `policy_data` and `value_data`.
-   */
-  con.Query("DROP VIEW IF EXISTS policy_data");
-  con.Query(
-      "CREATE VIEW policy_data AS "
-      "WITH usable_turns AS ("
-      "  SELECT "
-      "    t.me, "
-      "    t.opp, "
-      "    t.active_capture_idx, "
-      "    t.chosen_move "
-      "  FROM turns t "
-      "  JOIN players actor ON t.player_played = actor.name "
-      "  JOIN games g ON t.game_id = g.game_id "
-      "  JOIN players p1 ON g.p1_name = p1.name "
-      "  JOIN players p2 ON g.p2_name = p2.name "
-      "  WHERE "
-      "    g.reason != 'INVALID_MOVE' "
-      "    AND t.player_played NOT IN ('ForcedRandom', 'MadPlayer') "
-      "    AND actor.player_type IN ('minimax', 'mcts') "
-      "    AND p1.player_type IN ('minimax', 'mcts') "
-      "    AND p2.player_type IN ('minimax', 'mcts') "
-      // Strict no-ForcedRandom-game variant:
-      // "    AND g.forced_random_turns = 0 "
-      "    AND NOT EXISTS ("
-      "      SELECT 1 "
-      "      FROM turns next_t "
-      "      WHERE next_t.game_id = t.game_id "
-      "        AND next_t.turn_idx = t.turn_idx + 1 "
-      "        AND next_t.player_played = 'ForcedRandom'"
-      "    )"
-      ") "
-      "SELECT "
-      "  me, "
-      "  opp, "
-      "  active_capture_idx, "
-      "  chosen_move "
-      "FROM usable_turns");
-
-  /**
-   * @brief Creates the supervised value dataset view.
-   *
-   * @details The value view mirrors the policy filters so policy and value learn from
-   * the same state distribution. Labels are still derived from the final game outcome,
-   * so games with any forced-random escape are somewhat noisier; they are kept by
-   * default because discarding whole forced-random games makes the dataset much
-   * smaller. For the strict clean experiment, uncomment the
-   * `g.forced_random_turns = 0` predicate below.
-   */
-  con.Query("DROP VIEW IF EXISTS value_data");
-  con.Query(
-      "CREATE VIEW value_data AS "
-      "WITH usable_turns AS ("
-      "  SELECT "
-      "    t.me, "
-      "    t.opp, "
-      "    t.active_capture_idx, "
-      "    t.is_p1_turn, "
-      "    g.outcome "
-      "  FROM turns t "
-      "  JOIN games g ON t.game_id = g.game_id "
-      "  JOIN players p1 ON g.p1_name = p1.name "
-      "  JOIN players p2 ON g.p2_name = p2.name "
-      "  WHERE "
-      "    g.reason != 'INVALID_MOVE' "
-      "    AND t.player_played NOT IN ('ForcedRandom', 'MadPlayer') "
-      "    AND p1.player_type IN ('minimax', 'mcts') "
-      "    AND p2.player_type IN ('minimax', 'mcts') "
-      // Strict no-ForcedRandom-game variant:
-      // "    AND g.forced_random_turns = 0 "
-      "    AND NOT EXISTS ("
-      "      SELECT 1 "
-      "      FROM turns next_t "
-      "      WHERE next_t.game_id = t.game_id "
-      "        AND next_t.turn_idx = t.turn_idx + 1 "
-      "        AND next_t.player_played = 'ForcedRandom'"
-      "    )"
-      ") "
-      "SELECT "
-      "  me, "
-      "  opp, "
-      "  active_capture_idx, "
-      "  CASE "
-      "    WHEN outcome = 2                    THEN 0.5 "
-      "    WHEN is_p1_turn AND outcome = 0     THEN 1.0 "
-      "    WHEN NOT is_p1_turn AND outcome = 1 THEN 1.0 "
-      "    ELSE 0.0 "
-      "  END AS value_label "
-      "FROM usable_turns");
 }
 
 /**

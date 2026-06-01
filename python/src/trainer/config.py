@@ -7,9 +7,7 @@ import dataclasses
 class TrainerConfig:
     # Dataset
 
-    duckdb_path: str = "benchmark/dataset.duckdb"
-    # Remove exact duplicate training rows when reading DuckDB views.
-    dedupe_dataset_rows: bool = True
+    duckdb_path: str = "benchmark/training_dataset.duckdb"
     # # Batch Size
     # What it does: Dictates how many board states the network looks at before updating its weights.
     # How to choose: `8192` is a safer default for 8GB GPUs. Try `16384` if VRAM usage is comfortably below 8GB.

@@ -43,6 +43,9 @@ view-benchmark:
 generate:
 	PYTHONPATH=python/src uv run python python/src/kribu/generate_dataset.py --games 50 --output dataset.parquet --depth 4
 
+extract-data:
+	PYTHONPATH=python/src uv run ruff check python scripts/create_training_duckdb.py
+
 train:
 	PYTHONPATH=python/src uv run python -m trainer
 

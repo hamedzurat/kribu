@@ -11,12 +11,11 @@ CAPTURE_OFFSETS = np.arange(6, dtype=np.uint8)
 class InMemoryDuckDBDataset(Dataset):
     """DuckDB-backed dataset kept in memory for fast repeated training passes."""
 
-    def __init__(self, db_path: str, view_name: str, limit: int | None = None, dedupe_rows: bool = True):
+    def __init__(self, db_path: str, view_name: str, limit: int | None = None):
         super().__init__()
 
         con = duckdb.connect(db_path, read_only=True)
-        columns = "*" if not dedupe_rows else "DISTINCT *"
-        query = f"SELECT {columns} FROM {view_name}"
+        query = f"SELECT * FROM {view_name}"
         if limit is not None:
             query += f" LIMIT {limit}"
 
@@ -121,8 +120,8 @@ def make_loader(dataset: Dataset, batch_size: int, num_workers: int, pin_memory:
 
 def get_dataloaders(config):
     """Build policy/value train and validation dataloaders."""
-    policy_dataset = InMemoryDuckDBDataset(config.duckdb_path, "policy_data", dedupe_rows=config.dedupe_dataset_rows)
-    value_dataset = InMemoryDuckDBDataset(config.duckdb_path, "value_data", dedupe_rows=config.dedupe_dataset_rows)
+    policy_dataset = InMemoryDuckDBDataset(config.duckdb_path, "policy_data")
+    value_dataset = InMemoryDuckDBDataset(config.duckdb_path, "value_data")
     policy_train_dataset, policy_validation_dataset = split_dataset(policy_dataset, config.validation_fraction)
     value_train_dataset, value_validation_dataset = split_dataset(value_dataset, config.validation_fraction)
 
