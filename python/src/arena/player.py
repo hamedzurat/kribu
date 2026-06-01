@@ -25,14 +25,44 @@ class NeuralPlayer:
                     device = "cpu"
 
         self.device = torch.device(device)
+        checkpoint = torch.load(model_path, map_location=self.device, weights_only=True)
+        if isinstance(checkpoint, dict) and "model" in checkpoint:
+            stateDict = checkpoint["model"]
+        else:
+            stateDict = checkpoint
+
+        # Auto-detect architecture from stateDict
+        hiddenDim = config.hidden_dim
+        inputFeatures = config.input_features
+        numResidualBlocks = config.num_residual_blocks
+        actionSpace = config.action_space
+
+        if "input_proj.0.weight" in stateDict:
+            hiddenDim = stateDict["input_proj.0.weight"].shape[0]
+            inputFeatures = stateDict["input_proj.0.weight"].shape[1]
+
+        blockIndices = []
+        for key in stateDict.keys():
+            if key.startswith("blocks.") and key.endswith(".fc1.weight"):
+                try:
+                    parts = key.split(".")
+                    blockIndices.append(int(parts[1]))
+                except (ValueError, IndexError):
+                    pass
+        if blockIndices:
+            numResidualBlocks = max(blockIndices) + 1
+
+        if "policy_head.3.weight" in stateDict:
+            actionSpace = stateDict["policy_head.3.weight"].shape[0]
+
         self.model = SholoGutiNet(
-            input_features=config.input_features,
-            hidden_dim=config.hidden_dim,
-            num_residual_blocks=config.num_residual_blocks,
-            action_space=config.action_space,
+            input_features=inputFeatures,
+            hidden_dim=hiddenDim,
+            num_residual_blocks=numResidualBlocks,
+            action_space=actionSpace,
         ).to(self.device)
 
-        self.model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=True))
+        self.model.load_state_dict(stateDict)
         self.model.eval()
 
     def get_move(self, me_mask: int, opp_mask: int, active_capture_idx: int) -> tuple[int, float]:
