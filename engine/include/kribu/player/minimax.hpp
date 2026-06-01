@@ -756,6 +756,14 @@ inline void store_tt_result(
 }
 
 /**
+ * @brief Returns true if a transposition-table move may be used for this state.
+ * @details Position hash ignores repetition history; a cached move can be stale.
+ */
+[[nodiscard]] inline bool tt_move_is_usable(const boardState& state, int moveId) noexcept {
+  return moveId == -1 || sholoGuti::is_valid(state, moveId);
+}
+
+/**
  * @brief Core alpha-beta search with PVS, null-move pruning, LMR, and killer heuristic.
  * @param state The current board state.
  * @param depth The maximum search depth remaining.
@@ -794,7 +802,9 @@ inline void store_tt_result(
   i32 ttScore = 0;
   int ttMoveId = -1;
   if (ctx.transTable != nullptr && ctx.transTable->probe(state.hash, depth, alpha, beta, ttScore, ttMoveId)) {
-    if (!isRoot || ttMoveId != -1) {
+    if (!tt_move_is_usable(state, ttMoveId)) {
+      ttMoveId = -1;
+    } else if (!isRoot || ttMoveId != -1) {
       return MinimaxResult{.score = ttScore, .moveId = ttMoveId};
     }
   }
@@ -927,7 +937,12 @@ template <int Depth>
   }
 
   MinimaxResult res = iterative_deepening(state, Depth, ctx);
-  return res.moveId;
+  if (tt_move_is_usable(state, res.moveId)) {
+    return res.moveId;
+  }
+
+  const MoveList moves = all_possible_moves(state);
+  return moves.empty() ? -1 : static_cast<int>(moves.moves[0]);
 }
 
 }  // namespace kribu::player

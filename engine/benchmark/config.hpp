@@ -56,42 +56,6 @@ inline constexpr int THREAD_COUNT = 32;
 
 /**
  * @brief Compile-time defined array of benchmark matchups.
- *
- * @details Two data-generation categories:
- *
- *  POLICY matchups (~12,800 games)
- *    Strong-player moves are the training signal for the policy network.
- *
- *    Structure:
- *      - Deterministic normal-vs-normal grid is included once per ordered pair
- *        because these games are reproducible and do not need repeated sampling.
- *      - Most policy diversity comes from Mad variants, where injected randomness
- *        produces different trajectories from otherwise strong players.
- *      - Full Mad-vs-Mad coverage is intentionally avoided because it is too
- *        expensive; only a small low-cost subset is included for extra stochastic
- *        cross-play diversity.
- *
- *    Post-processing:
- *      - Filter by playerPlayed.
- *      - Exclude moves made by "MadPlayer".
- *      - Keep only moves made by the underlying strong policy.
- *
- *  VALUE matchups (~5,120 games)
- *    Diverse skill gaps and outcome distributions for value-network training.
- *
- *    Structure:
- *      - Random/Greedy self-play provides weak and noisy baseline outcomes.
- *      - Random/Greedy vs strong players provides clear win/loss labels.
- *      - Both player orders are included to reduce first-player/side bias.
- *
- *    Post-processing:
- *      - All turns from all games are usable.
- *      - Label is derived from the final game outcome.
- *
- *  Target: ~17,920 games total.
- *    Expected turn count: ~1.8M to 3.6M turns total (assuming games generally run 100-200 turns).
- *    Note: maxTurns is set to 1024 to properly detect and resolve draws/repetition.
- *    Minimax8 is oversampled relative to MCTS800 (4:1 game ratio) because MCTS800 is much slower.
  */
 inline constexpr std::array BENCHMARK_MATCHUPS = {
     // clang-format off
