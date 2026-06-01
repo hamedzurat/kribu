@@ -1,4 +1,4 @@
-"""Neural Network Player wrapper for Sholo Guti."""
+"""Neural Network Player wrapper for Sholo Guti in the Arena."""
 
 import os
 import torch
@@ -9,7 +9,7 @@ from trainer.model import SholoGutiNet
 
 
 class NeuralPlayer:
-    """A reusable class that loads the trained PyTorch model and provides move predictions."""
+    """A reusable class that loads a trained PyTorch model and provides move predictions."""
 
     def __init__(self, model_path: str = "checkpoints/best_model.pt", device: str | None = None):
         if not os.path.exists(model_path):
@@ -47,17 +47,17 @@ class NeuralPlayer:
         Returns:
             A tuple containing (best_move_index, win_probability).
         """
-        # 1. Decode me (uint64) to 37 bits
+        # Decode me (uint64) to 37 bits
         me_bits = np.zeros(37, dtype=np.float32)
         for i in range(37):
             me_bits[i] = (me_mask >> i) & 1
 
-        # 2. Decode opp (uint64) to 37 bits
+        # Decode opp (uint64) to 37 bits
         opp_bits = np.zeros(37, dtype=np.float32)
         for i in range(37):
             opp_bits[i] = (opp_mask >> i) & 1
 
-        # 3. Decode active_capture_idx (-1 to 36) to 6 bits
+        # Decode active_capture_idx (-1 to 36) to 6 bits
         cap_val = active_capture_idx + 1
         cap_bits = np.zeros(6, dtype=np.float32)
         for i in range(6):

@@ -7,6 +7,8 @@
 #include <nanobind/stl/vector.h>
 
 #include <kribu/board.hpp>
+#include <kribu/player/greedy.hpp>
+#include <kribu/player/mcts.hpp>
 #include <kribu/player/minimax.hpp>
 #include <kribu/rules.hpp>
 #include <kribu/types.hpp>
@@ -35,6 +37,18 @@ static MinimaxResult minimax_py(const boardState& state, int depth) {
   return minimax(state, depth, -INFINITY_VAL, INFINITY_VAL);
 }
 
+static int minimax_player_8_py(const boardState& state) {
+  return minimax_player_maker<8>(state);
+}
+
+static int mcts_player_800_py(const boardState& state) {
+  return mcts_player_maker<800>(state);
+}
+
+static int greedy_player_py(const boardState& state) {
+  return greedy_player_maker(state);
+}
+
 /**
  * @brief Binding module definition for kribu_ext.
  */
@@ -53,6 +67,7 @@ NB_MODULE(kribu_ext, module) {  // NOLINT(readability-identifier-length, moderni
       .def_rw("me", &boardState::me)
       .def_rw("opp", &boardState::opp)
       .def_rw("activeCaptureIdx", &boardState::activeCaptureIdx)
+      .def_rw("hash", &boardState::hash)
       .def("__eq__", &boardState::operator==);
 
   nb::class_<move>(module, "move")
@@ -87,4 +102,11 @@ NB_MODULE(kribu_ext, module) {  // NOLINT(readability-identifier-length, moderni
       .def_rw("moveId", &MinimaxResult::moveId);
 
   module.def("minimax", &minimax_py, nb::arg("state"), nb::arg("depth"), "Run minimax search and return MinimaxResult");
+  module.def(
+      "minimax_player_8", &minimax_player_8_py, nb::arg("state"), "Run minimax search with depth 8 and return move ID");
+  module.def("mcts_player_800",
+             &mcts_player_800_py,
+             nb::arg("state"),
+             "Run MCTS search with 800 iterations and return move ID");
+  module.def("greedy_player", &greedy_player_py, nb::arg("state"), "Run greedy player maker and return move ID");
 }

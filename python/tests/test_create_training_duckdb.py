@@ -108,3 +108,45 @@ def test_build_training_duckdb_materializes_only_randomized_training_tables(tmp_
     assert sorted(tableName for (tableName,) in tables) == ["policy_data", "value_data"]
     assert policyRows == [(30, 40, 0, 12)]
     assert valueRows == [(30, 40, 0, 1.0)]
+
+
+def test_build_training_duckdb_with_filter_no_forced_random(tmp_path):
+    sourcePath = tmp_path / "source.duckdb"
+    outputPath = tmp_path / "training.duckdb"
+    create_source_duckdb(sourcePath)
+
+    con = duckdb.connect(str(sourcePath))
+    try:
+        con.execute(
+            """
+            INSERT INTO games VALUES
+                (5, 'MinimaxA', 'MctsA', 0, 'WIN', 1, 4, 0, 0)
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO turns VALUES
+                (5, 0, 500, 600, 1, true, 99, 'MinimaxA')
+            """
+        )
+    finally:
+        con.close()
+
+    policyCount, valueCount = create_training_duckdb.build_training_duckdb(
+        sourcePath, outputPath, filterNoForcedRandom=True
+    )
+
+    # Game 5 has 0 forced_random_turns, so its turns should be excluded.
+    # Only Game 1's turn (which has 1 forced_random_turn) should remain.
+    assert policyCount == 1
+    assert valueCount == 1
+
+    con = duckdb.connect(str(outputPath), read_only=True)
+    try:
+        policyRows = con.execute("SELECT * FROM policy_data").fetchall()
+        valueRows = con.execute("SELECT * FROM value_data").fetchall()
+    finally:
+        con.close()
+
+    assert policyRows == [(30, 40, 0, 12)]
+    assert valueRows == [(30, 40, 0, 1.0)]

@@ -1,4 +1,4 @@
-.PHONY: setup build hot-build test test-cpp test-python clean format lint run benchmark view-benchmark view consolidate-dataset generate extract-data tensorboard train todo
+.PHONY: setup build hot-build test test-cpp test-python clean format lint run benchmark view-benchmark view consolidate-dataset generate extract-data tensorboard train arena todo
 
 # Detect number of processors for parallel execution
 NPROC := $(shell nproc)
@@ -52,8 +52,14 @@ tensorboard:
 train:
 	PYTHONPATH=python/src uv run python -m trainer
 
-inference:
-	PYTHONPATH=python/src uv run python -m inference
+# Forward trailing positional arguments to make arena (e.g. make arena -o random)
+ifeq (arena,$(firstword $(MAKECMDGOALS)))
+  ARENA_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+  $(eval $(ARENA_ARGS):;@:)
+endif
+
+arena:
+	PYTHONPATH=python/src uv run python -m arena $(ARENA_ARGS) $(ARGS)
 
 duckdbui:
 	duckdb -cmd "CALL start_ui_server();" benchmark/dataset.duckdb

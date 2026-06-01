@@ -38,9 +38,15 @@ def drop_existing_objects(con: duckdb.DuckDBPyConnection) -> None:
         con.execute(f"DROP {objectType} IF EXISTS {quote_identifier(tableName)}")
 
 
-def create_policy_data(con: duckdb.DuckDBPyConnection, *, keepDuplicates: bool) -> None:
-    """Create the randomized policy_data table."""
+def create_policy_data(con: duckdb.DuckDBPyConnection, *, keepDuplicates: bool, filterNoForcedRandom: bool) -> None:
+    """Create the randomized policy_data table.
+
+    @param con Reference to the DuckDB connection.
+    @param keepDuplicates Whether to keep duplicate rows.
+    @param filterNoForcedRandom Whether to filter out games with no forced random turns.
+    """
     distinct = "" if keepDuplicates else "DISTINCT"
+    filterClause = "AND g.forced_random_turns > 0" if filterNoForcedRandom else ""
     con.execute(
         f"""
         CREATE TABLE policy_data AS
@@ -68,6 +74,7 @@ def create_policy_data(con: duckdb.DuckDBPyConnection, *, keepDuplicates: bool) 
                         AND next_t.turn_idx = t.turn_idx + 1
                         AND next_t.player_played = 'ForcedRandom'
                 )
+                {filterClause}
         )
         SELECT {distinct}
             me,
@@ -80,9 +87,15 @@ def create_policy_data(con: duckdb.DuckDBPyConnection, *, keepDuplicates: bool) 
     )
 
 
-def create_value_data(con: duckdb.DuckDBPyConnection, *, keepDuplicates: bool) -> None:
-    """Create the randomized value_data table."""
+def create_value_data(con: duckdb.DuckDBPyConnection, *, keepDuplicates: bool, filterNoForcedRandom: bool) -> None:
+    """Create the randomized value_data table.
+
+    @param con Reference to the DuckDB connection.
+    @param keepDuplicates Whether to keep duplicate rows.
+    @param filterNoForcedRandom Whether to filter out games with no forced random turns.
+    """
     distinct = "" if keepDuplicates else "DISTINCT"
+    filterClause = "AND g.forced_random_turns > 0" if filterNoForcedRandom else ""
     con.execute(
         f"""
         CREATE TABLE value_data AS
@@ -109,6 +122,7 @@ def create_value_data(con: duckdb.DuckDBPyConnection, *, keepDuplicates: bool) -
                         AND next_t.turn_idx = t.turn_idx + 1
                         AND next_t.player_played = 'ForcedRandom'
                 )
+                {filterClause}
         )
         SELECT {distinct}
             me,
@@ -131,8 +145,15 @@ def build_training_duckdb(
     outputPath: Path,
     *,
     keepDuplicates: bool = False,
+    filterNoForcedRandom: bool = False,
 ) -> tuple[int, int]:
-    """Build randomized policy_data and value_data tables in a DuckDB file."""
+    """Build randomized policy_data and value_data tables in a DuckDB file.
+
+    @param sourcePath Path to the raw source DuckDB.
+    @param outputPath Path to the destination training DuckDB.
+    @param keepDuplicates Whether to keep exact duplicate rows.
+    @param filterNoForcedRandom Whether to filter out games with no forced random turns.
+    """
     if not sourcePath.exists():
         raise FileNotFoundError(f"source DuckDB not found: {sourcePath}")
     if sourcePath.resolve() == outputPath.resolve():
@@ -144,8 +165,8 @@ def build_training_duckdb(
     try:
         con.execute(f"ATTACH {quote_literal(str(sourcePath))} AS source (READ_ONLY)")
         drop_existing_objects(con)
-        create_policy_data(con, keepDuplicates=keepDuplicates)
-        create_value_data(con, keepDuplicates=keepDuplicates)
+        create_policy_data(con, keepDuplicates=keepDuplicates, filterNoForcedRandom=filterNoForcedRandom)
+        create_value_data(con, keepDuplicates=keepDuplicates, filterNoForcedRandom=filterNoForcedRandom)
 
         policyCount = con.execute("SELECT count(*) FROM policy_data").fetchone()[0]
         valueCount = con.execute("SELECT count(*) FROM value_data").fetchone()[0]
@@ -162,6 +183,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE_PATH, help="Raw benchmark DuckDB path.")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH, help="Training DuckDB path to write.")
     parser.add_argument("--keep-duplicates", action="store_true", help="Keep exact duplicate supervised rows.")
+    parser.add_argument(
+        "--filter-no-forced-random",
+        dest="filterNoForcedRandom",
+        action="store_true",
+        help="Filter out games where there are no forced random turns.",
+    )
     return parser.parse_args()
 
 
@@ -172,6 +199,7 @@ def main() -> None:
         args.source,
         args.output,
         keepDuplicates=args.keep_duplicates,
+        filterNoForcedRandom=args.filterNoForcedRandom,
     )
     print(f"wrote {args.output}")
     print(f"policy_data rows: {policyCount}")
