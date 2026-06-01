@@ -12,12 +12,14 @@ class TrainerConfig:
     # What it does: Dictates how many board states the network looks at before updating its weights.
     # How to choose: `8192` is a safer default for 8GB GPUs. Try `16384` if VRAM usage is comfortably below 8GB.
     # When to adjust: If you run out of memory, drop it to `4096`. If training is stable and VRAM is spare, increase it.
-    batch_size: int = 8192
+    # batch_size: int = 8192
+    batch_size: int = 512
     num_workers: int = 0
     # # Validation Split
     # What it does: Holds out a deterministic slice of rows for "is the model getting better?" checks.
     # The split uses every Nth row instead of copying huge index arrays.
-    validation_fraction: float = 0.02
+    # validation_fraction: float = 0.02
+    validation_fraction: float = 0.10
 
     # Model Architecture
 
@@ -27,7 +29,8 @@ class TrainerConfig:
     # What it does: Width determines the network's capacity to recognize complex, concurrent patterns (like identifying multiple trapping setups across the board at once).
     # How to choose: For bitboard inputs, standard sizes are `256`, `512`, or `1024`.
     # When to adjust: If your training loss refuses to go down (underfitting), increase the width. If your training loss drops near zero but your model plays terribly against new opponents (overfitting), decrease the width. `512` is a perfect starting point.
-    hidden_dim: int = 512
+    # hidden_dim: int = 512
+    hidden_dim: int = 256
     # # Number of Residual Blocks
     # What it does: Depth allows the network to perform multi-step "logical deductions." Think of each block as one step of lookahead intuition.
     # How to choose: AlphaZero used 19 blocks for Go and 40 for Chess. Sholo Guti is simpler, so `10` is a very smart, lightweight choice.
