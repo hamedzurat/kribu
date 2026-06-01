@@ -46,12 +46,10 @@ def get_winner_and_reason(status, is_model_turn):
     return "draw", "unknown"
 
 
-def make_dashboard(
-    games_played, total_games, model_wins, opp_wins, draws, current_game_idx, current_game_info, history_log
-):
+def make_dashboard(games_played, args, model_wins, opp_wins, draws, current_game_idx, current_game_info, history_log):
     """Creates a beautiful Layout dashboard of the arena status."""
     layout = Layout()
-    layout.split_column(Layout(name="header", size=3), Layout(name="main", ratio=1), Layout(name="footer", size=3))
+    layout.split_column(Layout(name="header", size=4), Layout(name="main", ratio=1), Layout(name="footer", size=3))
 
     # Count draw reasons dynamically from history_log for detailed top bar summary
     draw_rep_model = sum(1 for gh in history_log if gh["winner"] == "draw" and gh["reason"] == "repetition_by_model")
@@ -76,11 +74,12 @@ def make_dashboard(
 
     # Header Panel
     win_rate = (model_wins / games_played * 100) if games_played > 0 else 0.0
+    header_text = (
+        f"[bold yellow]SHOLO GUTI ARENA[/bold yellow] | Model: [green]{args.model_path}[/green] | Opponent: [red]{args.opponent.upper()}[/red] | Games: [cyan]{games_played}/{args.games}[/cyan] | Max Turns: [magenta]{args.max_turns}[/magenta]\n"
+        f"Model Win Rate: [bold green]{win_rate:.1f}%[/bold green] | Record: [green]{model_wins}[/green]-[red]{opp_wins}[/red]-[white]{draws}{draw_details_str}[/white] | Force Random: [yellow]{args.force_random}[/yellow] | CSV: [white]{args.csv_path}[/white]"
+    )
     header_panel = Panel(
-        f"[bold yellow]SHOLO GUTI ARENA EVALUATION[/bold yellow] | "
-        f"Games: [bold cyan]{games_played}/{total_games}[/bold cyan] | "
-        f"Model Win Rate: [bold green]{win_rate:.1f}%[/bold green] | "
-        f"Model: [green]{model_wins}[/green] - Opponent: [red]{opp_wins}[/red] - Draws: [white]{draws}{draw_details_str}[/white]",
+        header_text,
         style="bold white",
         border_style="cyan",
     )
@@ -138,7 +137,7 @@ def make_dashboard(
         BarColumn(bar_width=None),
         TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
     )
-    task_id = progress_bar.add_task("Match Progress", completed=games_played, total=total_games)
+    task_id = progress_bar.add_task("Match Progress", completed=games_played, total=args.games)
     layout["footer"].update(Panel(progress_bar, border_style="cyan"))
 
     return layout
@@ -270,7 +269,7 @@ def main():
                     live.update(
                         make_dashboard(
                             game_idx - 1,
-                            args.games,
+                            args,
                             model_wins,
                             opp_wins,
                             draws,
@@ -400,7 +399,7 @@ def main():
                 # Update live display after game completes
                 live.update(
                     make_dashboard(
-                        game_idx, args.games, model_wins, opp_wins, draws, game_idx, current_game_info, history_log
+                        game_idx, args, model_wins, opp_wins, draws, game_idx, current_game_info, history_log
                     )
                 )
                 time.sleep(0.5)  # Brief pause between games to allow visual review
