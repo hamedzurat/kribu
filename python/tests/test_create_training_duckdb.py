@@ -136,10 +136,10 @@ def test_build_training_duckdb_with_filter_no_forced_random(tmp_path):
         sourcePath, outputPath, filterNoForcedRandom=True
     )
 
-    # Game 5 has 0 forced_random_turns, so its turns should be excluded.
-    # Only Game 1's turn (which has 1 forced_random_turn) should remain.
-    assert policyCount == 1
-    assert valueCount == 1
+    # Game 1 has 1 forced_random_turn, so its turns should be excluded.
+    # Games 4 and 5 both have 0 forced_random_turns, so their turns should remain.
+    assert policyCount == 2
+    assert valueCount == 2
 
     con = duckdb.connect(str(outputPath), read_only=True)
     try:
@@ -148,5 +148,5 @@ def test_build_training_duckdb_with_filter_no_forced_random(tmp_path):
     finally:
         con.close()
 
-    assert policyRows == [(30, 40, 0, 12)]
-    assert valueRows == [(30, 40, 0, 1.0)]
+    assert sorted(policyRows) == sorted([(30, 40, 0, 12), (500, 600, 1, 99)])
+    assert sorted(valueRows) == sorted([(30, 40, 0, 1.0), (500, 600, 1, 1.0)])

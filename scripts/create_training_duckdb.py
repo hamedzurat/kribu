@@ -46,7 +46,7 @@ def create_policy_data(con: duckdb.DuckDBPyConnection, *, keepDuplicates: bool, 
     @param filterNoForcedRandom Whether to filter out games with no forced random turns.
     """
     distinct = "" if keepDuplicates else "DISTINCT"
-    filterClause = "AND g.forced_random_turns > 0" if filterNoForcedRandom else ""
+    filterClause = "AND g.forced_random_turns = 0" if filterNoForcedRandom else ""
     con.execute(
         f"""
         CREATE TABLE policy_data AS
@@ -95,7 +95,7 @@ def create_value_data(con: duckdb.DuckDBPyConnection, *, keepDuplicates: bool, f
     @param filterNoForcedRandom Whether to filter out games with no forced random turns.
     """
     distinct = "" if keepDuplicates else "DISTINCT"
-    filterClause = "AND g.forced_random_turns > 0" if filterNoForcedRandom else ""
+    filterClause = "AND g.forced_random_turns = 0" if filterNoForcedRandom else ""
     con.execute(
         f"""
         CREATE TABLE value_data AS

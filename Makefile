@@ -43,8 +43,13 @@ view-benchmark:
 generate:
 	PYTHONPATH=python/src uv run python python/src/kribu/generate_dataset.py --games 50 --output dataset.parquet --depth 4
 
+ifeq (extract-data,$(firstword $(MAKECMDGOALS)))
+  EXTRACT_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+  $(eval $(EXTRACT_ARGS):;@:)
+endif
+
 extract-data:
-	PYTHONPATH=python/src uv run python scripts/create_training_duckdb.py
+	PYTHONPATH=python/src uv run python scripts/create_training_duckdb.py $(EXTRACT_ARGS)
 
 tensorboard:
 	PYTHONPATH=python/src uv run tensorboard --logdir checkpoints/tensorboard
@@ -52,7 +57,6 @@ tensorboard:
 train:
 	PYTHONPATH=python/src uv run python -m trainer
 
-# Forward trailing positional arguments to make arena (e.g. make arena -o random)
 ifeq (arena,$(firstword $(MAKECMDGOALS)))
   ARENA_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
   $(eval $(ARENA_ARGS):;@:)
