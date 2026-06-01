@@ -1,4 +1,4 @@
-.PHONY: setup build hot-build test test-cpp test-python clean format lint run benchmark view-benchmark view consolidate-dataset generate extract-data train todo
+.PHONY: setup build hot-build test test-cpp test-python clean format lint run benchmark view-benchmark view consolidate-dataset generate extract-data tensorboard train todo
 
 # Detect number of processors for parallel execution
 NPROC := $(shell nproc)
@@ -45,6 +45,9 @@ generate:
 
 extract-data:
 	PYTHONPATH=python/src uv run python scripts/create_training_duckdb.py
+
+tensorboard:
+	PYTHONPATH=python/src uv run tensorboard --logdir checkpoints/tensorboard
 
 train:
 	PYTHONPATH=python/src uv run python -m trainer

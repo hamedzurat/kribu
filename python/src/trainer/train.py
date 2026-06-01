@@ -9,6 +9,7 @@ from rich.layout import Layout
 from rich.live import Live
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
 from rich.text import Text
+from torch.utils.tensorboard import SummaryWriter
 
 from .config import config
 from .dataset import get_dataloaders
@@ -298,9 +299,13 @@ def train():
     value_iter = infinite_iter(value_loader)
 
     os.makedirs(config.save_dir, exist_ok=True)
+
     start_epoch, best_validation_loss, checks_without_improvement, history_data = load_checkpoint(
         model, optimizer, scheduler, scaler, device
     )
+
+    tensorboard_dir = os.path.join(config.save_dir, "tensorboard", "current")
+    writer = SummaryWriter(log_dir=tensorboard_dir, purge_step=max(0, start_epoch - 1))
 
     progress_epoch = Progress(
         TextColumn("[green]Epochs:"), BarColumn(), TextColumn("[progress.percentage]{task.percentage:>3.0f}%")
@@ -315,6 +320,17 @@ def train():
     epoch_task = progress_epoch.add_task("", total=config.epochs, completed=max(0, start_epoch - 1))
     step_task = progress_step.add_task("", total=steps_per_epoch)
     device_name = torch.cuda.get_device_name(0) if device.type == "cuda" else "CPU"
+
+    if start_epoch == 1:
+        writer.add_text("run/device", device.type)
+        writer.add_text("run/device_name", device_name)
+        writer.add_text("run/save_dir", config.save_dir)
+
+        writer.add_scalar("config/steps_per_epoch", steps_per_epoch, 0)
+        writer.add_scalar("config/policy_passes_per_epoch", policy_passes, 0)
+        writer.add_scalar("config/value_passes_per_epoch", value_passes, 0)
+        writer.add_scalar("config/batch_size", config.batch_size, 0)
+        writer.add_scalar("config/value_loss_weight", config.value_loss_weight, 0)
 
     layout = Layout()
     layout.split_column(Layout(name="header", size=1), Layout(name="body"), Layout(name="footer", size=1))
@@ -340,92 +356,120 @@ def train():
     layout["header"].update(generate_header(start_epoch - 1, 0.0, 0.0, float("nan"), best_validation_loss))
     layout["body"].update(generate_body(history_data))
 
-    with Live(layout, refresh_per_second=4):
-        for epoch in range(start_epoch, config.epochs + 1):
-            model.train()
-            total_pol_loss = 0.0
-            total_val_loss = 0.0
+    try:
+        with Live(layout, refresh_per_second=4):
+            for epoch in range(start_epoch, config.epochs + 1):
+                model.train()
+                total_pol_loss = 0.0
+                total_val_loss = 0.0
 
-            progress_step.reset(step_task)
-            for _ in range(steps_per_epoch):
-                p_x, p_target, _ = next(policy_iter)
-                v_x, _, v_target = next(value_iter)
-                p_x, p_target, _ = move_batch_to_device((p_x, p_target, _), device)
-                v_x, _, v_target = move_batch_to_device((v_x, _, v_target), device)
+                progress_step.reset(step_task)
+                for _ in range(steps_per_epoch):
+                    p_x, p_target, _ = next(policy_iter)
+                    v_x, _, v_target = next(value_iter)
+                    p_x, p_target, _ = move_batch_to_device((p_x, p_target, _), device)
+                    v_x, _, v_target = move_batch_to_device((v_x, _, v_target), device)
 
-                optimizer.zero_grad(set_to_none=True)
-                with torch.autocast(device_type=device.type, enabled=use_mixed_precision):
-                    p_logits, _ = model(p_x)
-                    loss_p = policy_criterion(p_logits, p_target)
-                    _, v_pred = model(v_x)
-                    loss_v = value_criterion(v_pred, v_target)
-                    loss = loss_p + config.value_loss_weight * loss_v
+                    optimizer.zero_grad(set_to_none=True)
+                    with torch.autocast(device_type=device.type, enabled=use_mixed_precision):
+                        p_logits, _ = model(p_x)
+                        loss_p = policy_criterion(p_logits, p_target)
+                        _, v_pred = model(v_x)
+                        loss_v = value_criterion(v_pred, v_target)
+                        loss = loss_p + config.value_loss_weight * loss_v
 
-                scaler.scale(loss).backward()
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
-                scaler.step(optimizer)
-                scaler.update()
+                    scaler.scale(loss).backward()
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
+                    scaler.step(optimizer)
+                    scaler.update()
 
-                total_pol_loss += loss_p.item()
-                total_val_loss += loss_v.item()
-                progress_step.advance(step_task)
+                    total_pol_loss += loss_p.item()
+                    total_val_loss += loss_v.item()
+                    progress_step.advance(step_task)
 
-            avg_pol = total_pol_loss / steps_per_epoch
-            avg_val = total_val_loss / steps_per_epoch
-            avg_tot = loss_total(avg_pol, avg_val, config.value_loss_weight)
-            validation_total = float("nan")
-            policy_accuracy = float("nan")
-            value_mae = float("nan")
+                avg_pol = total_pol_loss / steps_per_epoch
+                avg_val = total_val_loss / steps_per_epoch
+                avg_tot = loss_total(avg_pol, avg_val, config.value_loss_weight)
+                validation_total = float("nan")
+                policy_accuracy = float("nan")
+                value_mae = float("nan")
 
-            if epoch % config.validate_every_epochs == 0:
-                val_pol, val_value, policy_accuracy, value_mae = evaluate(
-                    model,
-                    policy_validation_loader,
-                    value_validation_loader,
-                    policy_criterion,
-                    value_criterion,
-                    device,
-                )
-                validation_total = loss_total(val_pol, val_value, config.value_loss_weight)
-                scheduler.step(validation_total)
+                if epoch % config.validate_every_epochs == 0:
+                    val_pol, val_value, policy_accuracy, value_mae = evaluate(
+                        model,
+                        policy_validation_loader,
+                        value_validation_loader,
+                        policy_criterion,
+                        value_criterion,
+                        device,
+                    )
+                    validation_total = loss_total(val_pol, val_value, config.value_loss_weight)
+                    scheduler.step(validation_total)
 
-                if is_improved(validation_total, best_validation_loss, config.min_improvement):
-                    best_validation_loss = validation_total
-                    checks_without_improvement = 0
-                    torch.save(model.state_dict(), os.path.join(config.save_dir, "best_model.pt"))
+                    if is_improved(validation_total, best_validation_loss, config.min_improvement):
+                        best_validation_loss = validation_total
+                        checks_without_improvement = 0
+                        torch.save(model.state_dict(), os.path.join(config.save_dir, "best_model.pt"))
+                    else:
+                        checks_without_improvement += 1
                 else:
-                    checks_without_improvement += 1
-            else:
-                scheduler.step(avg_tot)
+                    scheduler.step(avg_tot)
 
-            if policy_validation_loader is None and is_improved(avg_tot, best_validation_loss, config.min_improvement):
-                best_validation_loss = avg_tot
-                torch.save(model.state_dict(), os.path.join(config.save_dir, "best_model.pt"))
+                if policy_validation_loader is None and is_improved(
+                    avg_tot, best_validation_loss, config.min_improvement
+                ):
+                    best_validation_loss = avg_tot
+                    torch.save(model.state_dict(), os.path.join(config.save_dir, "best_model.pt"))
 
-            history_data.append((epoch, avg_tot, validation_total, policy_accuracy, value_mae))
+                history_data.append((epoch, avg_tot, validation_total, policy_accuracy, value_mae))
 
-            if epoch % config.save_every_epochs == 0:
-                torch.save(model.state_dict(), os.path.join(config.save_dir, f"model_ep{epoch}.pt"))
+                writer.add_scalar("loss/train_total", avg_tot, epoch)
+                writer.add_scalar("loss/train_policy", avg_pol, epoch)
+                writer.add_scalar("loss/train_value", avg_val, epoch)
 
-            save_checkpoint(
-                model,
-                optimizer,
-                scheduler,
-                scaler,
-                epoch,
-                best_validation_loss,
-                checks_without_improvement,
-                history_data,
-            )
+                if is_finite_metric(validation_total):
+                    writer.add_scalar("loss/validation_total", validation_total, epoch)
 
-            layout["header"].update(generate_header(epoch, avg_pol, avg_val, validation_total, best_validation_loss))
-            layout["body"].update(generate_body(history_data))
-            progress_epoch.advance(epoch_task)
+                if is_finite_metric(policy_accuracy):
+                    writer.add_scalar("metrics/policy_accuracy", policy_accuracy, epoch)
 
-            if (
-                policy_validation_loader is not None
-                and config.early_stop_patience > 0
-                and checks_without_improvement >= config.early_stop_patience
-            ):
-                break
+                if is_finite_metric(value_mae):
+                    writer.add_scalar("metrics/value_mae", value_mae, epoch)
+
+                writer.add_scalar("optimizer/learning_rate", current_learning_rate(optimizer), epoch)
+
+                if is_finite_metric(best_validation_loss):
+                    writer.add_scalar("training/best_validation_loss", best_validation_loss, epoch)
+
+                writer.add_scalar("training/checks_without_improvement", checks_without_improvement, epoch)
+
+                if epoch % config.save_every_epochs == 0:
+                    torch.save(model.state_dict(), os.path.join(config.save_dir, f"model_ep{epoch}.pt"))
+
+                save_checkpoint(
+                    model,
+                    optimizer,
+                    scheduler,
+                    scaler,
+                    epoch,
+                    best_validation_loss,
+                    checks_without_improvement,
+                    history_data,
+                )
+                writer.flush()
+
+                layout["header"].update(
+                    generate_header(epoch, avg_pol, avg_val, validation_total, best_validation_loss)
+                )
+                layout["body"].update(generate_body(history_data))
+                progress_epoch.advance(epoch_task)
+
+                if (
+                    policy_validation_loader is not None
+                    and config.early_stop_patience > 0
+                    and checks_without_improvement >= config.early_stop_patience
+                ):
+                    break
+    finally:
+        writer.close()
