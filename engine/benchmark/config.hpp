@@ -54,6 +54,7 @@ struct MatchConfig {
  */
 inline constexpr int THREAD_COUNT = 32;
 
+// clang-format off
 /**
  * @brief Compile-time defined array of benchmark matchups.
  *
@@ -65,11 +66,9 @@ inline constexpr int THREAD_COUNT = 32;
  *
  * - **VALUE Matchups** (Minimax/MCTS vs Random/Greedy):
  *   - **policy_data**: No (Filtered out because one of the player types is random/greedy)
- *   - **value_data**: Yes, but only on the expert's turn (Preserves turns where the Minimax/MCTS player was the active
- * player; discards turns where the Random/Greedy player was active)
+ *   - **value_data**: Yes, but only on the expert's turn (Preserves turns where the Minimax/MCTS player was the active player; discards turns where the Random/Greedy player was active)
  */
 inline constexpr std::array BENCHMARK_MATCHUPS = {
-    // clang-format off
     // ── POLICY matchups ──────────────────────────────────────────────────────
     // zero randomness
     MatchConfig{.player1Name = "Minimax8",       .player2Name = "Minimax8",           .games = 1,     .maxTurns = 1024},
