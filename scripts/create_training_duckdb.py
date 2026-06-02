@@ -42,11 +42,10 @@ def create_policy_data(con: duckdb.DuckDBPyConnection, *, keepDuplicates: bool) 
     """Create the randomized policy_data table.
 
     @param con Reference to the DuckDB connection.
-    @param keepDuplicates Whether to keep duplicate rows.
+    @param keepDuplicates Whether to keep duplicate rows (has no effect if filtering/averaging).
     """
-    distinct = "" if keepDuplicates else "DISTINCT"
     con.execute(
-        f"""
+        """
         CREATE TABLE policy_data AS
         WITH usable_turns AS (
             SELECT
@@ -65,13 +64,28 @@ def create_policy_data(con: duckdb.DuckDBPyConnection, *, keepDuplicates: bool) 
                 AND actor.player_type IN ('minimax', 'mcts')
                 AND p1.player_type IN ('minimax', 'mcts')
                 AND p2.player_type IN ('minimax', 'mcts')
+        ),
+        move_counts AS (
+            SELECT
+                me,
+                opp,
+                active_capture_idx,
+                chosen_move,
+                COUNT(*) as cnt,
+                ROW_NUMBER() OVER (
+                    PARTITION BY me, opp, active_capture_idx 
+                    ORDER BY COUNT(*) DESC, random()
+                ) as rn
+            FROM usable_turns
+            GROUP BY me, opp, active_capture_idx, chosen_move
         )
-        SELECT {distinct}
+        SELECT
             me,
             opp,
             active_capture_idx,
             chosen_move
-        FROM usable_turns
+        FROM move_counts
+        WHERE rn = 1
         ORDER BY random()
         """
     )
@@ -81,11 +95,10 @@ def create_value_data(con: duckdb.DuckDBPyConnection, *, keepDuplicates: bool) -
     """Create the randomized value_data table.
 
     @param con Reference to the DuckDB connection.
-    @param keepDuplicates Whether to keep duplicate rows.
+    @param keepDuplicates Whether to keep duplicate rows (has no effect if filtering/averaging).
     """
-    distinct = "" if keepDuplicates else "DISTINCT"
     con.execute(
-        f"""
+        """
         CREATE TABLE value_data AS
         WITH usable_turns AS (
             SELECT
@@ -101,18 +114,27 @@ def create_value_data(con: duckdb.DuckDBPyConnection, *, keepDuplicates: bool) -
                 g.reason != 'INVALID_MOVE'
                 AND t.player_played != 'MadPlayer'
                 AND actor.player_type IN ('minimax', 'mcts')
+        ),
+        turn_values AS (
+            SELECT
+                me,
+                opp,
+                active_capture_idx,
+                CASE
+                    WHEN outcome = 2 THEN 0.5
+                    WHEN is_p1_turn AND outcome = 0 THEN 1.0
+                    WHEN NOT is_p1_turn AND outcome = 1 THEN 1.0
+                    ELSE 0.0
+                END AS value_label
+            FROM usable_turns
         )
-        SELECT {distinct}
+        SELECT
             me,
             opp,
             active_capture_idx,
-            CASE
-                WHEN outcome = 2 THEN 0.5
-                WHEN is_p1_turn AND outcome = 0 THEN 1.0
-                WHEN NOT is_p1_turn AND outcome = 1 THEN 1.0
-                ELSE 0.0
-            END AS value_label
-        FROM usable_turns
+            AVG(value_label) AS value_label
+        FROM turn_values
+        GROUP BY me, opp, active_capture_idx
         ORDER BY random()
         """
     )
