@@ -1,4 +1,4 @@
-"""Arena evaluator to test neural network models against Minimax or Random players."""
+"""Arena evaluator to test neural network models against search or baseline players."""
 
 import argparse
 import csv
@@ -132,7 +132,7 @@ def make_dashboard(games_played, args, model_wins, opp_wins, draws, current_game
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Test Sholo Guti PyTorch model against Minimax/Random.")
+    parser = argparse.ArgumentParser(description="Test Sholo Guti PyTorch model against search or baseline opponents.")
     parser.add_argument(
         "--model-path", "-m", type=str, default="checkpoints/best_model.pt", help="Path to .pt checkpoint file."
     )
@@ -140,9 +140,9 @@ def main():
         "--opponent",
         "-o",
         type=str,
-        choices=["minimax", "random", "mcts", "greedy"],
+        choices=["minimax", "minimax4", "minimax_mad", "random", "mcts", "greedy"],
         default="minimax",
-        help="Opponent type: 'minimax', 'random', 'mcts', or 'greedy'.",
+        help="Opponent type: 'minimax', 'minimax4', 'minimax_mad', 'random', 'mcts', or 'greedy'.",
     )
     parser.add_argument("--games", "-n", type=int, default=128, help="Number of games to play.")
     parser.add_argument("--max-turns", "-t", type=int, default=1024, help="Max turns per game.")
@@ -278,6 +278,10 @@ def main():
                         # Opponent selection
                         if args.opponent == "minimax":
                             move_idx = kribu.minimax_player_8(state)
+                        elif args.opponent == "minimax4":
+                            move_idx = kribu.minimax_player_4(state)
+                        elif args.opponent == "minimax_mad":
+                            move_idx = kribu.minimax_player_8_mad2(state)
                         elif args.opponent == "mcts":
                             move_idx = kribu.mcts_player_800(state)
                         elif args.opponent == "greedy":

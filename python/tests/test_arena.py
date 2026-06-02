@@ -1,6 +1,8 @@
 from kribu import (
     INITIAL_STATE,
+    minimax_player_4,
     minimax_player_8,
+    minimax_player_8_mad2,
     all_possible_moves,
 )
 import os
@@ -18,9 +20,16 @@ def test_minimax_player_8():
     assert move_id in valid_moves
 
 
+def test_additional_arena_opponents_return_legal_moves():
+    valid_moves = all_possible_moves(INITIAL_STATE)
+
+    assert minimax_player_4(INITIAL_STATE) in valid_moves
+    assert minimax_player_8_mad2(INITIAL_STATE) in valid_moves
+
+
 def test_neural_player_dynamic_architecture(tmp_path):
     # Create a model with custom architecture (different hidden_dim and blocks)
-    customModel = SholoGutiNet(input_features=80, hidden_dim=128, num_residual_blocks=3, action_space=265)
+    customModel = SholoGutiNet(input_features=83, hidden_dim=128, num_residual_blocks=3, action_space=265)
 
     # Save state dict
     modelPath = os.path.join(tmp_path, "custom_model.pt")
@@ -35,7 +44,7 @@ def test_neural_player_dynamic_architecture(tmp_path):
 
 
 def test_neural_player_selects_best_valid_move(tmp_path):
-    model = SholoGutiNet(input_features=80, hidden_dim=32, num_residual_blocks=1, action_space=265)
+    model = SholoGutiNet(input_features=83, hidden_dim=32, num_residual_blocks=1, action_space=265)
     with torch.no_grad():
         for parameter in model.parameters():
             parameter.zero_()
