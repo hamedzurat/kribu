@@ -7,6 +7,7 @@ from torch.utils.data import Dataset
 
 BITBOARD_OFFSETS = np.arange(37, dtype=np.uint64)
 CAPTURE_OFFSETS = np.arange(6, dtype=np.uint8)
+MAX_REPETITION_HISTORY = 24.0
 
 
 def legal_move_mask(me: int, opp: int, active_capture_idx: int, action_space: int) -> np.ndarray:
@@ -50,6 +51,9 @@ class InMemoryDuckDBDataset(Dataset):
         self.active_capture_idx = data["active_capture_idx"].astype(np.int8, copy=False)
         self.policy_target = data.get("chosen_move")
         self.value_target = data.get("value_label")
+        self.history_count = data.get("history_count")
+        self.current_repeat_count = data.get("current_repeat_count")
+        self.current_flip_repeat_count = data.get("current_flip_repeat_count")
         self.include_legal_mask = include_legal_mask
         self.action_space = action_space
 
@@ -57,6 +61,18 @@ class InMemoryDuckDBDataset(Dataset):
             self.policy_target = self.policy_target.astype(np.int64, copy=False)
         if self.value_target is not None:
             self.value_target = self.value_target.astype(np.float32, copy=False)
+        if self.history_count is None:
+            self.history_count = np.zeros(len(self.me), dtype=np.float32)
+        else:
+            self.history_count = self.history_count.astype(np.float32, copy=False)
+        if self.current_repeat_count is None:
+            self.current_repeat_count = np.zeros(len(self.me), dtype=np.float32)
+        else:
+            self.current_repeat_count = self.current_repeat_count.astype(np.float32, copy=False)
+        if self.current_flip_repeat_count is None:
+            self.current_flip_repeat_count = np.zeros(len(self.me), dtype=np.float32)
+        else:
+            self.current_flip_repeat_count = self.current_flip_repeat_count.astype(np.float32, copy=False)
 
     def __len__(self) -> int:
         return len(self.me)
@@ -70,7 +86,15 @@ class InMemoryDuckDBDataset(Dataset):
         opp_bits = ((self.opp[idx, None] >> BITBOARD_OFFSETS) & np.uint64(1)).astype(np.float32, copy=False)
         cap_vals = (self.active_capture_idx[idx] + np.int8(1)).astype(np.uint8, copy=False)
         cap_bits = ((cap_vals[:, None] >> CAPTURE_OFFSETS) & np.uint8(1)).astype(np.float32, copy=False)
-        features = torch.from_numpy(np.concatenate([me_bits, opp_bits, cap_bits], axis=1))
+        repetition_features = np.stack(
+            [
+                self.history_count[idx] / MAX_REPETITION_HISTORY,
+                self.current_repeat_count[idx] / MAX_REPETITION_HISTORY,
+                self.current_flip_repeat_count[idx] / MAX_REPETITION_HISTORY,
+            ],
+            axis=1,
+        ).astype(np.float32, copy=False)
+        features = torch.from_numpy(np.concatenate([me_bits, opp_bits, cap_bits, repetition_features], axis=1))
 
         if self.policy_target is None:
             policy_target = torch.zeros(len(idx), dtype=torch.int64)

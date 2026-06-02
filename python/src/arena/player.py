@@ -1,8 +1,9 @@
 """Neural Network Player wrapper for Sholo Guti in the Arena."""
 
 import os
-import torch
 import numpy as np
+import torch
+import kribu
 
 from trainer.config import config
 from trainer.model import SholoGutiNet
@@ -61,6 +62,7 @@ class NeuralPlayer:
             num_residual_blocks=numResidualBlocks,
             action_space=actionSpace,
         ).to(self.device)
+        self.input_features = inputFeatures
 
         self.model.load_state_dict(stateDict)
         self.model.eval()
@@ -71,6 +73,7 @@ class NeuralPlayer:
         opp_mask: int,
         active_capture_idx: int,
         valid_moves: list[int] | None = None,
+        state: kribu.boardState | None = None,
     ) -> tuple[int, float]:
         """
         Runs inference on a given board state.
@@ -80,6 +83,7 @@ class NeuralPlayer:
             opp_mask: The bitmask representing the opponent's pieces.
             active_capture_idx: The node index of a piece currently in a capture sequence (-1 if none).
             valid_moves: Optional legal move IDs. When provided, policy selection is masked to these moves.
+            state: Optional full board state, used to derive repetition-aware input features when the model expects them.
 
         Returns:
             A tuple containing (best_move_index, win_probability).
@@ -100,7 +104,23 @@ class NeuralPlayer:
         for i in range(6):
             cap_bits[i] = (cap_val >> i) & 1
 
-        X = np.concatenate([me_bits, opp_bits, cap_bits])
+        extra_features = np.zeros(3, dtype=np.float32)
+        if self.input_features >= 83 and state is not None:
+            historyCount, currentRepeatCount, currentFlipRepeatCount = kribu.repetition_features(state)
+            extra_features[:] = np.array(
+                [
+                    historyCount / 24.0,
+                    currentRepeatCount / 24.0,
+                    currentFlipRepeatCount / 24.0,
+                ],
+                dtype=np.float32,
+            )
+
+        X = (
+            np.concatenate([me_bits, opp_bits, cap_bits, extra_features])
+            if self.input_features >= 83
+            else np.concatenate([me_bits, opp_bits, cap_bits])
+        )
         X_tensor = torch.from_numpy(X).unsqueeze(0).to(self.device)  # Add batch dimension
 
         with torch.no_grad():

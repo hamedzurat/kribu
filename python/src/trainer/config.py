@@ -23,8 +23,8 @@ class TrainerConfig:
 
     # Model Architecture
 
-    # 37 bits for me, 37 for opp, 6 bits for active_capture
-    input_features: int = 37 + 37 + 6
+    # 37 bits for me, 37 for opp, 6 bits for active_capture, 3 repetition features
+    input_features: int = 37 + 37 + 6 + 3
     # # Neurons per layer
     # What it does: Width determines the network's capacity to recognize complex, concurrent patterns (like identifying multiple trapping setups across the board at once).
     # How to choose: For bitboard inputs, standard sizes are `256`, `512`, or `1024`.

@@ -7,6 +7,8 @@ import argparse
 from pathlib import Path
 
 import duckdb
+import kribu
+import pandas as pd
 
 
 DEFAULT_SOURCE_PATH = Path("benchmark/dataset.duckdb")
@@ -14,6 +16,7 @@ DEFAULT_OUTPUT_PATH = Path("benchmark/training_dataset.duckdb")
 DEFAULT_MIN_POLICY_VISITS = 1
 DEFAULT_MIN_POLICY_SUPPORT = 0.0
 DEFAULT_MAX_DRAW_ONLY_VISITS = 0
+DEFAULT_HISTORY_BATCH_GAMES = 256
 
 
 def quote_identifier(identifier: str) -> str:
@@ -39,6 +42,112 @@ def drop_existing_objects(con: duckdb.DuckDBPyConnection) -> None:
     for tableName, tableType in objects:
         objectType = "VIEW" if tableType == "VIEW" else "TABLE"
         con.execute(f"DROP {objectType} IF EXISTS {quote_identifier(tableName)}")
+
+
+def create_turn_history_features(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    batchGames: int = DEFAULT_HISTORY_BATCH_GAMES,
+) -> None:
+    """Reconstruct compact repetition features for each recorded turn.
+
+    @param con Reference to the DuckDB connection with the source DB attached as `source`.
+    @param batchGames Number of games to annotate per SQL fetch batch.
+    """
+    if batchGames < 1:
+        raise ValueError("batchGames must be at least 1")
+
+    con.execute(
+        """
+        CREATE TABLE turn_history_features (
+            game_id INTEGER,
+            turn_idx INTEGER,
+            history_count INTEGER,
+            current_repeat_count INTEGER,
+            current_flip_repeat_count INTEGER,
+            PRIMARY KEY (game_id, turn_idx)
+        )
+        """
+    )
+
+    gameIds = [row[0] for row in con.execute("SELECT game_id FROM source.games ORDER BY game_id").fetchall()]
+
+    for startIndex in range(0, len(gameIds), batchGames):
+        batchIds = gameIds[startIndex : startIndex + batchGames]
+        placeholders = ", ".join("?" for _ in batchIds)
+        turnRows = con.execute(
+            f"""
+            SELECT game_id, turn_idx, me, opp, active_capture_idx, chosen_move
+            FROM source.turns
+            WHERE game_id IN ({placeholders})
+            ORDER BY game_id, turn_idx
+            """,
+            batchIds,
+        ).fetchall()
+
+        featureRows: list[tuple[int, int, int, int, int]] = []
+        currentGameId = None
+        meMasks: list[int] = []
+        oppMasks: list[int] = []
+        activeCaptureIndices: list[int] = []
+        chosenMoves: list[int] = []
+        turnIndices: list[int] = []
+
+        def flush_game() -> None:
+            if currentGameId is None:
+                return
+
+            historyCounts, currentRepeats, currentFlipRepeats = kribu.annotate_repetition_features(
+                meMasks,
+                oppMasks,
+                activeCaptureIndices,
+                chosenMoves,
+            )
+            for rowIndex, turnIndex in enumerate(turnIndices):
+                featureRows.append(
+                    (
+                        int(currentGameId),
+                        int(turnIndex),
+                        int(historyCounts[rowIndex]),
+                        int(currentRepeats[rowIndex]),
+                        int(currentFlipRepeats[rowIndex]),
+                    )
+                )
+
+        for gameId, turnIdx, me, opp, activeCaptureIdx, chosenMove in turnRows:
+            if currentGameId is not None and gameId != currentGameId:
+                flush_game()
+                meMasks = []
+                oppMasks = []
+                activeCaptureIndices = []
+                chosenMoves = []
+                turnIndices = []
+
+            currentGameId = gameId
+            meMasks.append(int(me))
+            oppMasks.append(int(opp))
+            activeCaptureIndices.append(int(activeCaptureIdx))
+            chosenMoves.append(int(chosenMove))
+            turnIndices.append(int(turnIdx))
+
+        flush_game()
+
+        if featureRows:
+            featureFrame = pd.DataFrame(
+                featureRows,
+                columns=[
+                    "game_id",
+                    "turn_idx",
+                    "history_count",
+                    "current_repeat_count",
+                    "current_flip_repeat_count",
+                ],
+            )
+            con.register("turn_history_feature_batch", featureFrame)
+            try:
+                con.execute("INSERT INTO turn_history_features SELECT * FROM turn_history_feature_batch")
+            finally:
+                con.unregister("turn_history_feature_batch")
 
 
 def create_policy_data(
@@ -68,8 +177,14 @@ def create_policy_data(
                 t.me,
                 t.opp,
                 t.active_capture_idx,
+                hf.history_count,
+                hf.current_repeat_count,
+                hf.current_flip_repeat_count,
                 t.chosen_move
             FROM source.turns AS t
+            JOIN turn_history_features AS hf
+                ON t.game_id = hf.game_id
+                AND t.turn_idx = hf.turn_idx
             JOIN source.players AS actor ON t.player_played = actor.name
             JOIN source.games AS g ON t.game_id = g.game_id
             JOIN source.players AS p1 ON g.p1_name = p1.name
@@ -87,30 +202,58 @@ def create_policy_data(
                 me,
                 opp,
                 active_capture_idx,
+                history_count,
+                current_repeat_count,
+                current_flip_repeat_count,
                 chosen_move,
                 COUNT(*) AS chosen_move_count,
                 ROW_NUMBER() OVER (
-                    PARTITION BY me, opp, active_capture_idx 
+                    PARTITION BY
+                        me,
+                        opp,
+                        active_capture_idx,
+                        history_count,
+                        current_repeat_count,
+                        current_flip_repeat_count
                     ORDER BY COUNT(*) DESC, random()
                 ) AS rn
             FROM usable_turns
-            GROUP BY me, opp, active_capture_idx, chosen_move
+            GROUP BY
+                me,
+                opp,
+                active_capture_idx,
+                history_count,
+                current_repeat_count,
+                current_flip_repeat_count,
+                chosen_move
         ),
         state_stats AS (
             SELECT
                 me,
                 opp,
                 active_capture_idx,
+                history_count,
+                current_repeat_count,
+                current_flip_repeat_count,
                 SUM(chosen_move_count) AS visit_count,
                 COUNT(*) AS distinct_move_count,
                 MAX(chosen_move_count) AS majority_move_count
             FROM move_counts
-            GROUP BY me, opp, active_capture_idx
+            GROUP BY
+                me,
+                opp,
+                active_capture_idx,
+                history_count,
+                current_repeat_count,
+                current_flip_repeat_count
         )
         SELECT
             mc.me,
             mc.opp,
             mc.active_capture_idx,
+            mc.history_count,
+            mc.current_repeat_count,
+            mc.current_flip_repeat_count,
             mc.chosen_move,
             ss.visit_count,
             ss.distinct_move_count,
@@ -121,6 +264,9 @@ def create_policy_data(
             ON mc.me = ss.me
             AND mc.opp = ss.opp
             AND mc.active_capture_idx = ss.active_capture_idx
+            AND mc.history_count = ss.history_count
+            AND mc.current_repeat_count = ss.current_repeat_count
+            AND mc.current_flip_repeat_count = ss.current_flip_repeat_count
         WHERE
             mc.rn = 1
             AND ss.visit_count >= {minPolicyVisits}
@@ -164,10 +310,16 @@ def create_value_data(
                 t.me,
                 t.opp,
                 t.active_capture_idx,
+                hf.history_count,
+                hf.current_repeat_count,
+                hf.current_flip_repeat_count,
                 t.is_p1_turn,
                 g.outcome,
                 g.reason
             FROM source.turns AS t
+            JOIN turn_history_features AS hf
+                ON t.game_id = hf.game_id
+                AND t.turn_idx = hf.turn_idx
             JOIN source.players AS actor ON t.player_played = actor.name
             JOIN source.games AS g ON t.game_id = g.game_id
             WHERE
@@ -180,6 +332,9 @@ def create_value_data(
                 me,
                 opp,
                 active_capture_idx,
+                history_count,
+                current_repeat_count,
+                current_flip_repeat_count,
                 reason,
                 CASE
                     WHEN outcome = 2 THEN 0.5
@@ -193,6 +348,9 @@ def create_value_data(
             me,
             opp,
             active_capture_idx,
+            history_count,
+            current_repeat_count,
+            current_flip_repeat_count,
             AVG(value_label) AS value_label,
             COUNT(*) AS visit_count,
             MIN(value_label) AS min_value_label,
@@ -200,7 +358,13 @@ def create_value_data(
             BOOL_OR(reason = 'DRAW_MAX_TURNS') AS seen_draw_game,
             BOOL_OR(reason != 'DRAW_MAX_TURNS') AS seen_non_draw_game
         FROM turn_values
-        GROUP BY me, opp, active_capture_idx
+        GROUP BY
+            me,
+            opp,
+            active_capture_idx,
+            history_count,
+            current_repeat_count,
+            current_flip_repeat_count
         HAVING TRUE
             {drawVisitFilter}
         ORDER BY random()
@@ -237,6 +401,7 @@ def build_training_duckdb(
     try:
         con.execute(f"ATTACH {quote_literal(str(sourcePath))} AS source (READ_ONLY)")
         drop_existing_objects(con)
+        create_turn_history_features(con)
         create_policy_data(
             con,
             keepDuplicates=keepDuplicates,
@@ -248,6 +413,7 @@ def build_training_duckdb(
             keepDuplicates=keepDuplicates,
             maxDrawOnlyVisits=maxDrawOnlyVisits,
         )
+        con.execute("DROP TABLE turn_history_features")
 
         policyCount = con.execute("SELECT count(*) FROM policy_data").fetchone()[0]
         valueCount = con.execute("SELECT count(*) FROM value_data").fetchone()[0]

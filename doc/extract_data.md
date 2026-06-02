@@ -40,6 +40,9 @@ One row per exact state:
 - `me`
 - `opp`
 - `active_capture_idx`
+- `history_count`
+- `current_repeat_count`
+- `current_flip_repeat_count`
 - `chosen_move`
 - `visit_count`
 - `distinct_move_count`
@@ -49,6 +52,7 @@ One row per exact state:
 Meaning:
 
 - Rows are grouped by exact board state.
+- Repetition-aware history features are part of the state key.
 - The most frequent move becomes the policy label.
 - Extra columns preserve confidence information.
 
@@ -59,6 +63,9 @@ One row per exact state:
 - `me`
 - `opp`
 - `active_capture_idx`
+- `history_count`
+- `current_repeat_count`
+- `current_flip_repeat_count`
 - `value_label`
 - `visit_count`
 - `min_value_label`
@@ -69,8 +76,41 @@ One row per exact state:
 Meaning:
 
 - Rows are grouped by exact board state.
+- Repetition-aware history features are part of the state key.
 - Win/loss/draw labels are averaged into `value_label`.
 - Extra columns show whether the state is sharp, mixed, draw-only, or seen in both draw and non-draw games.
+
+______________________________________________________________________
+
+## Model Input
+
+The trainer MLP currently sees `83` input features total:
+
+- `37` bits for `me`
+- `37` bits for `opp`
+- `6` bits for `active_capture_idx + 1`
+- `3` repetition features
+
+In order, the input vector is:
+
+1. `me[0..36]`
+1. `opp[0..36]`
+1. `active_capture_idx` encoded as `6` bits after shifting by `+1`
+1. `history_count / 24`
+1. `current_repeat_count / 24`
+1. `current_flip_repeat_count / 24`
+
+The repetition features mean:
+
+- `history_count`: how many hashes are currently stored in the rolling repetition window
+- `current_repeat_count`: how many times the current state hash already appears in that window
+- `current_flip_repeat_count`: how many times the flipped current state hash appears in that window
+
+Why this matters:
+
+- the old model only saw board layout and active capture state
+- the game rules also depend on repetition history
+- these 3 features let the model distinguish "same board, different repetition danger"
 
 ______________________________________________________________________
 
@@ -78,15 +118,18 @@ ______________________________________________________________________
 
 ```mermaid
 flowchart TD
-    A["benchmark/dataset.duckdb"] --> B["Filter usable turns"]
-    B --> C["Group by me, opp, active_capture_idx"]
-    C --> D["policy_data: choose most frequent move"]
-    C --> E["value_data: average win/loss/draw labels"]
-    D --> F["Optional policy filters"]
-    E --> G["Optional draw-only value filters"]
-    F --> H["benchmark/training_dataset.duckdb"]
-    G --> H
+    A["benchmark/dataset.duckdb"] --> B["Reconstruct repetition features per turn"]
+    B --> C["Filter usable turns"]
+    C --> D["Group by me, opp, active_capture_idx, history features"]
+    D --> E["policy_data: choose most frequent move"]
+    D --> F["value_data: average win/loss/draw labels"]
+    E --> G["Optional policy filters"]
+    F --> H["Optional draw-only value filters"]
+    G --> I["benchmark/training_dataset.duckdb"]
+    H --> I
 ```
+
+The repetition features are reconstructed from recorded turn order using the engine rules through the Python binding in [../bindings/src/kribu_ext.cpp](../bindings/src/kribu_ext.cpp).
 
 ### Policy extraction
 

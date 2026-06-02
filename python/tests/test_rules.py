@@ -13,6 +13,8 @@ from kribu import (
     END_CHAIN_MOVE,
     NUM_SIMPLE_MOVES,
     NUM_CAPTURE_MOVES,
+    repetition_features,
+    annotate_repetition_features,
 )
 
 
@@ -39,6 +41,25 @@ def test_flip_board():
     assert piece_count(flipped.opp) == 16
     assert piece_count(flipped.me) == 16
     assert flipped.activeCaptureIdx == -1
+
+
+def test_repetition_features_start_empty():
+    assert repetition_features(INITIAL_STATE) == (0, 0, 0)
+
+
+def test_annotate_repetition_features_tracks_quiet_history():
+    moveId = all_possible_moves(INITIAL_STATE)[0]
+    nextState = flip_board(apply_move(INITIAL_STATE, moveId))
+    features = annotate_repetition_features(
+        [int(INITIAL_STATE.me), int(nextState.me)],
+        [int(INITIAL_STATE.opp), int(nextState.opp)],
+        [int(INITIAL_STATE.activeCaptureIdx), int(nextState.activeCaptureIdx)],
+        [int(moveId), int(all_possible_moves(nextState)[0])],
+    )
+
+    assert features[0] == [0, 1]
+    assert features[1] == [0, 0]
+    assert features[2] == [0, 0]
 
 
 def test_decode_move():

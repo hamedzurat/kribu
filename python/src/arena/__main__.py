@@ -272,6 +272,7 @@ def main():
                             opp_mask=state.opp,
                             active_capture_idx=state.activeCaptureIdx,
                             valid_moves=valid_moves,
+                            state=state,
                         )
                     else:
                         # Opponent selection

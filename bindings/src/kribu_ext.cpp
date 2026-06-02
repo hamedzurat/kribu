@@ -5,6 +5,7 @@
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/array.h>
+#include <nanobind/stl/tuple.h>
 #include <nanobind/stl/vector.h>
 
 #include <kribu/board.hpp>
@@ -13,6 +14,8 @@
 #include <kribu/player/minimax.hpp>
 #include <kribu/rules.hpp>
 #include <kribu/types.hpp>
+#include <stdexcept>
+#include <tuple>
 #include <vector>
 
 namespace nb = nanobind;
@@ -48,6 +51,88 @@ static int mcts_player_800_py(const boardState& state) {
 
 static int greedy_player_py(const boardState& state) {
   return greedy_player_maker(state);
+}
+
+/**
+ * @brief Count how many entries in the repetition history equal the target hash.
+ * @param state Current board state with its rolling repetition history.
+ * @param targetHash Zobrist hash to count inside the valid history window.
+ * @return Number of occurrences of @p targetHash in `state.history[0:historyCount)`.
+ */
+static int count_history_matches(const boardState& state, u64 targetHash) {
+  int matches = 0;
+  for (u32 index = 0; index < state.historyCount; ++index) {
+    if (state.history[index] == targetHash) {
+      matches++;
+    }
+  }
+  return matches;
+}
+
+/**
+ * @brief Return compact repetition features for one board state.
+ * @param state Current board state.
+ * @return Tuple of `(history_count, current_repeat_count, current_flip_repeat_count)`.
+ */
+static std::tuple<int, int, int> repetition_features_py(const boardState& state) {
+  return {
+      static_cast<int>(state.historyCount),
+      count_history_matches(state, state.hash),
+      count_history_matches(state, compute_flipped_hash(state)),
+  };
+}
+
+/**
+ * @brief Reconstruct repetition features for the ordered turn sequence of one game.
+ * @param meMasks Active-player bitboards for each turn.
+ * @param oppMasks Opponent-player bitboards for each turn.
+ * @param activeCaptureIndices Active capture indices for each turn.
+ * @param chosenMoves Recorded chosen move IDs for each turn.
+ * @return Tuple of per-turn vectors `(history_count, current_repeat_count, current_flip_repeat_count)`.
+ */
+static std::tuple<std::vector<int>, std::vector<int>, std::vector<int>> annotate_repetition_features_py(
+    const std::vector<u64>& meMasks,
+    const std::vector<u64>& oppMasks,
+    const std::vector<i8>& activeCaptureIndices,
+    const std::vector<int>& chosenMoves) {
+  const usize turnCount = meMasks.size();
+  if (oppMasks.size() != turnCount || activeCaptureIndices.size() != turnCount || chosenMoves.size() != turnCount) {
+    throw std::invalid_argument("annotate_repetition_features expects equally sized input vectors");
+  }
+
+  std::vector<int> historyCounts;
+  std::vector<int> currentRepeatCounts;
+  std::vector<int> currentFlipRepeatCounts;
+  historyCounts.reserve(turnCount);
+  currentRepeatCounts.reserve(turnCount);
+  currentFlipRepeatCounts.reserve(turnCount);
+
+  if (turnCount == 0) {
+    return {historyCounts, currentRepeatCounts, currentFlipRepeatCounts};
+  }
+
+  boardState state;
+  state.me = meMasks[0];
+  state.opp = oppMasks[0];
+  state.activeCaptureIdx = activeCaptureIndices[0];
+  state.hash = kribu::zobrist::compute_hash(
+      {.activePlayer = state.me, .opponentPlayer = state.opp, .activeCaptureIdx = state.activeCaptureIdx});
+
+  for (usize turnIndex = 0; turnIndex < turnCount; ++turnIndex) {
+    if (state.me != meMasks[turnIndex] || state.opp != oppMasks[turnIndex]
+        || state.activeCaptureIdx != activeCaptureIndices[turnIndex]) {
+      throw std::runtime_error("annotate_repetition_features encountered a turn sequence mismatch");
+    }
+
+    historyCounts.push_back(static_cast<int>(state.historyCount));
+    currentRepeatCounts.push_back(count_history_matches(state, state.hash));
+    currentFlipRepeatCounts.push_back(count_history_matches(state, compute_flipped_hash(state)));
+
+    boardState nextState = apply_move(state, chosenMoves[turnIndex]);
+    state = nextState.activeCaptureIdx == -1 ? flip_board(nextState) : nextState;
+  }
+
+  return {historyCounts, currentRepeatCounts, currentFlipRepeatCounts};
 }
 
 /**
@@ -98,6 +183,17 @@ NB_MODULE(kribu_ext, module) {  // NOLINT(readability-identifier-length, moderni
   module.def("all_possible_moves", &all_possible_moves_py, "Get all possible valid move IDs for the given state");
   module.def("apply_move", &apply_move, "Apply a move and return the new state (no validity check)");
   module.def("get_game_status", &get_game_status, "Get the full GameStatus enum value");
+  module.def("repetition_features",
+             &repetition_features_py,
+             nb::arg("state"),
+             "Return (history_count, current_repeat_count, current_flip_repeat_count) for one state");
+  module.def("annotate_repetition_features",
+             &annotate_repetition_features_py,
+             nb::arg("me_masks"),
+             nb::arg("opp_masks"),
+             nb::arg("active_capture_indices"),
+             nb::arg("chosen_moves"),
+             "Reconstruct repetition features for the ordered turns of one recorded game");
 
   nb::class_<MinimaxResult>(module, "MinimaxResult")
       .def(nb::init<>())
