@@ -160,6 +160,22 @@ TEST_CASE(  // NOLINT(readability-function-cognitive-complexity)
   REQUIRE(is_valid(state10, res.moveId));
 }
 
+TEST_CASE("Minimax rejects stale TT score when repetition history differs", "[minimax]") {
+  boardState state10 = build_state10_from_repetition_cycle();
+  boardState state10Padded = state10;
+  for (int k = 0; k < 8; ++k) {
+    state10Padded.history[k] = 0x9999ULL + static_cast<u64>(k);
+  }
+  state10Padded.historyCount = 8;
+  REQUIRE(state10.hash == state10Padded.hash);
+
+  kribu::TranspositionTable transpositionTable(1024);
+  transpositionTable.store(state10.hash, 4, 777, -1, kribu::TTFlag::EXACT);
+
+  MinimaxResult res = minimax(state10Padded, 4, -INFINITY_VAL, INFINITY_VAL, &transpositionTable);
+  REQUIRE(res.score != 777);
+}
+
 TEST_CASE("Minimax player maker stays legal through repetition cycle", "[minimax]") {
   boardState state = INITIAL_STATE;
   bool isP1Turn = true;

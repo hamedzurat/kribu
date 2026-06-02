@@ -28,14 +28,13 @@ class TrainerConfig:
     # # Neurons per layer
     # What it does: Width determines the network's capacity to recognize complex, concurrent patterns (like identifying multiple trapping setups across the board at once).
     # How to choose: For bitboard inputs, standard sizes are `256`, `512`, or `1024`.
-    # When to adjust: If your training loss refuses to go down (underfitting), increase the width. If your training loss drops near zero but your model plays terribly against new opponents (overfitting), decrease the width. `512` is a perfect starting point.
-    hidden_dim: int = 512
-    # hidden_dim: int = 256
+    # When to adjust: If your loss drops but teacher imitation is still weak, a larger width is a reasonable next try.
+    hidden_dim: int = 1024
     # # Number of Residual Blocks
     # What it does: Depth allows the network to perform multi-step "logical deductions." Think of each block as one step of lookahead intuition.
-    # How to choose: AlphaZero used 19 blocks for Go and 40 for Chess. Sholo Guti is simpler, so `10` is a very smart, lightweight choice.
-    # When to adjust: If you find the engine is missing deep tactical sequences, try increasing to `15` or `20`. Just keep in mind that deeper networks are slower to evaluate during MCTS search.
-    num_residual_blocks: int = 10
+    # How to choose: AlphaZero used 19 blocks for Go and 40 for Chess. Sholo Guti is simpler, so `10` is a solid lightweight choice.
+    # When to adjust: If the student still underfits the teacher, adding a few blocks is a reasonable next step.
+    num_residual_blocks: int = 12
     # # Action Space
     # What it does: The total number of possible moves the engine can make.
     action_space: int = 265  # TOTAL_MOVE_COUNT
@@ -62,9 +61,9 @@ class TrainerConfig:
     min_learning_rate: float = 1e-5
     # # Epochs
     # What it does: Number of complete dataset passes to train for when `steps_per_epoch` is None.
-    # When to adjust: Train until validation/self-play strength stops improving. With ~10M rows, 10-30 full passes is
-    # usually a more practical first run than 100; keep 100 for a long overnight/production run.
-    epochs: int = 100
+    # When to adjust: Train until validation/self-play strength stops improving. A larger model does not need a huge
+    # epoch budget when early stopping is enabled.
+    epochs: int = 60
     # # Steps Per Epoch
     # What it does: Number of optimizer updates per epoch. None means "one full pass over the larger of policy/value".
     # With batch_size=16384 and ~10.5M rows this is about 647 steps, covering every row once per epoch.

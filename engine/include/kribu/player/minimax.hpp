@@ -756,11 +756,27 @@ inline void store_tt_result(
 }
 
 /**
- * @brief Returns true if a transposition-table move may be used for this state.
- * @details Position hash ignores repetition history; a cached move can be stale.
+ * @brief Returns true if a transposition-table entry may be used for this state.
+ * @details Position hash ignores repetition history, so any non-empty repetition
+ *          window can make a cached score or move stale. In those cases we skip
+ *          TT reuse entirely.
  */
-[[nodiscard]] inline bool tt_move_is_usable(const boardState& state, int moveId) noexcept {
+[[nodiscard]] inline bool tt_entry_is_usable(const boardState& state, int moveId) noexcept {
+  if (state.historyCount != 0) {
+    return false;
+  }
   return moveId == -1 || sholoGuti::is_valid(state, moveId);
+}
+
+/**
+ * @brief Returns true if an alpha-beta node should use search-path repetition detection.
+ * @details The rule engine already enforces repetition legality using the rolling
+ *          history stored in the board state. Re-checking only the raw position hash
+ *          on the active search path is too aggressive because it ignores that history
+ *          context and can convert legal repeatable positions into artificial draws.
+ */
+[[nodiscard]] inline bool should_check_search_path_repetition(const boardState& state) noexcept {
+  return state.historyCount == 0;
 }
 
 /**
@@ -776,7 +792,7 @@ inline void store_tt_result(
 [[nodiscard]] inline MinimaxResult alpha_beta(
     const boardState& state, int depth, i32 alpha, i32 beta, SearchContext& ctx, bool isRoot) noexcept {
   // Repetition/cycle detection on the active search path
-  if (!isRoot) {
+  if (!isRoot && should_check_search_path_repetition(state)) {
     for (int i = 0; i < ctx.pathSize; ++i) {
       if (ctx.searchPath[i] == state.hash) {
         return MinimaxResult{.score = 0, .moveId = -1};
@@ -802,7 +818,7 @@ inline void store_tt_result(
   i32 ttScore = 0;
   int ttMoveId = -1;
   if (ctx.transTable != nullptr && ctx.transTable->probe(state.hash, depth, alpha, beta, ttScore, ttMoveId)) {
-    if (!tt_move_is_usable(state, ttMoveId)) {
+    if (!tt_entry_is_usable(state, ttMoveId)) {
       ttMoveId = -1;
     } else if (!isRoot || ttMoveId != -1) {
       return MinimaxResult{.score = ttScore, .moveId = ttMoveId};
@@ -826,7 +842,9 @@ inline void store_tt_result(
 
   MinimaxResult bestResult = evaluate_children(state, depth, alpha, beta, ordered, ctx);
 
-  store_tt_result(ctx, state.hash, depth, bestResult.score, bestResult.moveId, originalAlpha, beta);
+  if (state.historyCount == 0) {
+    store_tt_result(ctx, state.hash, depth, bestResult.score, bestResult.moveId, originalAlpha, beta);
+  }
 
   return bestResult;
 }
