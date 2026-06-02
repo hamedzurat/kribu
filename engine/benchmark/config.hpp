@@ -77,8 +77,8 @@ inline constexpr std::array BENCHMARK_MATCHUPS = {
     MatchConfig{.player1Name = "MCTS800",        .player2Name = "MCTS800",            .games =    1,  .maxTurns = 2048},
 
     // Same Mad vs Mad
-    MatchConfig{.player1Name = "Minimax8_Mad2",    .player2Name = "Minimax8_Mad2",    .games = 1024,  .maxTurns = 2048},
-    MatchConfig{.player1Name = "Minimax8_Mad1",    .player2Name = "Minimax8_Mad1",    .games = 1024,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8_Mad2",    .player2Name = "Minimax8_Mad2",    .games = 2048,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8_Mad1",    .player2Name = "Minimax8_Mad1",    .games = 2048,  .maxTurns = 2048},
     MatchConfig{.player1Name = "MCTS800_Mad2",     .player2Name = "MCTS800_Mad2",     .games =  256,  .maxTurns = 2048},
     MatchConfig{.player1Name = "MCTS800_Mad1",     .player2Name = "MCTS800_Mad1",     .games =  256,  .maxTurns = 2048},
 
@@ -105,8 +105,8 @@ inline constexpr std::array BENCHMARK_MATCHUPS = {
     MatchConfig{.player1Name = "Minimax8_Mad1",    .player2Name = "MCTS800",          .games =   64,  .maxTurns = 2048},
 
     // Low-cost sampled Mad vs Mad
-    MatchConfig{.player1Name = "Minimax8_Mad2",    .player2Name = "Minimax8_Mad1",    .games = 1024,  .maxTurns = 2048},
-    MatchConfig{.player1Name = "Minimax8_Mad1",    .player2Name = "Minimax8_Mad2",    .games = 1024,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8_Mad2",    .player2Name = "Minimax8_Mad1",    .games = 2048,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8_Mad1",    .player2Name = "Minimax8_Mad2",    .games = 2048,  .maxTurns = 2048},
     MatchConfig{.player1Name = "Minimax8_Mad2",    .player2Name = "MCTS800_Mad2",     .games =   64,  .maxTurns = 2048},
     MatchConfig{.player1Name = "MCTS800_Mad2",     .player2Name = "Minimax8_Mad2",    .games =   64,  .maxTurns = 2048},
     MatchConfig{.player1Name = "MCTS800_Mad1",     .player2Name = "Minimax8_Mad2",    .games =   64,  .maxTurns = 2048},
