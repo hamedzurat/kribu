@@ -79,6 +79,10 @@ class TrainerConfig:
     # What it does: Balances how much the network cares about getting the "Move" right (Policy) vs getting the "Win Probability" right (Value). Policy loss is usually Cross-Entropy (values ~2.0 to 5.0). Value loss is usually Mean Squared Error (values ~0.1 to 0.3).
     # When to adjust: If you notice your network is amazing at predicting moves but terrible at evaluating who is winning, increase `value_loss_weight` to `2.0` or `5.0`.
     value_loss_weight: float = 1.0
+    # # Policy Only
+    # What it does: Trains the network as a pure move imitator and skips value batches/metrics entirely.
+    # When to adjust: Turn this on when you want a fast model-only player and the value head is not helping.
+    policy_only: bool = True
     # # Gradient Clipping
     # What it does: Caps rare large updates so training is less likely to spike or diverge.
     max_grad_norm: float = 1.0
@@ -89,7 +93,7 @@ class TrainerConfig:
     min_improvement: float = 1e-4
     # # Resume
     # What it does: Continue from checkpoints/last_checkpoint.pt when it exists.
-    resume: bool = True
+    resume: bool = False
 
 
 config = TrainerConfig()

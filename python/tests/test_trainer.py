@@ -29,6 +29,10 @@ def test_resolve_steps_per_epoch_uses_larger_loader_by_default():
     assert resolve_steps_per_epoch(policy_batches=640, value_batches=647, requested_steps=None) == 647
 
 
+def test_resolve_steps_per_epoch_supports_policy_only():
+    assert resolve_steps_per_epoch(policy_batches=640, value_batches=None, requested_steps=None) == 640
+
+
 def test_resolve_steps_per_epoch_keeps_explicit_override():
     assert resolve_steps_per_epoch(policy_batches=640, value_batches=647, requested_steps=1000) == 1000
 
@@ -63,6 +67,7 @@ def test_split_dataset_uses_every_nth_row_for_validation():
 
 def test_loss_and_improvement_helpers():
     assert loss_total(policy_loss=2.0, value_loss=0.25, value_loss_weight=2.0) == 2.5
+    assert loss_total(policy_loss=2.0, value_loss=float("nan"), value_loss_weight=0.0) == 2.0
     assert is_improved(metric=0.9, best_metric=1.0, min_improvement=0.01)
     assert not is_improved(metric=0.995, best_metric=1.0, min_improvement=0.01)
 

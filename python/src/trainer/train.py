@@ -23,15 +23,19 @@ def infinite_iter(dataloader):
             yield batch
 
 
-def resolve_steps_per_epoch(policy_batches: int, value_batches: int, requested_steps: int | None) -> int:
+def resolve_steps_per_epoch(policy_batches: int, value_batches: int | None, requested_steps: int | None) -> int:
     """Return the number of optimizer updates to run for each epoch."""
     if requested_steps is not None:
         if requested_steps <= 0:
             raise ValueError("steps_per_epoch must be positive when set")
         return requested_steps
 
-    if policy_batches <= 0 or value_batches <= 0:
-        raise ValueError("policy and value dataloaders must not be empty")
+    if policy_batches <= 0:
+        raise ValueError("policy dataloader must not be empty")
+    if value_batches is None:
+        return policy_batches
+    if value_batches <= 0:
+        raise ValueError("value dataloader must not be empty when provided")
     return max(policy_batches, value_batches)
 
 
@@ -49,6 +53,8 @@ def current_learning_rate(optimizer: torch.optim.Optimizer) -> float:
 
 def loss_total(policy_loss: float, value_loss: float, value_loss_weight: float) -> float:
     """Return the weighted combined trainer loss."""
+    if value_loss_weight == 0.0 or not is_finite_metric(value_loss):
+        return policy_loss
     return policy_loss + value_loss_weight * value_loss
 
 
@@ -245,7 +251,7 @@ def evaluate(
     model, policy_loader, value_loader, policy_criterion, value_criterion, device
 ) -> tuple[float, float, float, float]:
     """Evaluate validation policy/value losses, policy accuracy, and value MAE."""
-    if policy_loader is None or value_loader is None:
+    if policy_loader is None:
         return float("nan"), float("nan"), float("nan"), float("nan")
 
     model.eval()
@@ -263,6 +269,12 @@ def evaluate(
         correct_policy += int((p_logits.argmax(dim=-1) == p_target).sum().item())
         policy_samples += p_target.numel()
 
+    policy_loss = total_policy_loss / len(policy_loader)
+    policy_accuracy = correct_policy / policy_samples
+
+    if value_loader is None:
+        return policy_loss, float("nan"), policy_accuracy, float("nan")
+
     total_value_loss = 0.0
     total_value_abs_error = 0.0
     value_samples = 0
@@ -274,9 +286,7 @@ def evaluate(
         total_value_abs_error += float(torch.abs(v_pred - v_target).sum().item())
         value_samples += v_target.numel()
 
-    policy_loss = total_policy_loss / len(policy_loader)
     value_loss = total_value_loss / len(value_loader)
-    policy_accuracy = correct_policy / policy_samples
     value_mae = total_value_abs_error / value_samples
     return policy_loss, value_loss, policy_accuracy, value_mae
 
@@ -311,13 +321,17 @@ def train():
     scaler = torch.amp.GradScaler(device.type, enabled=use_mixed_precision)
 
     policy_loader, value_loader, policy_validation_loader, value_validation_loader = get_dataloaders(config)
+    effective_value_loss_weight = 0.0 if config.policy_only else config.value_loss_weight
+    if config.policy_only:
+        value_loader = None
+        value_validation_loader = None
     policy_batches = len(policy_loader)
-    value_batches = len(value_loader)
+    value_batches = None if value_loader is None else len(value_loader)
     steps_per_epoch = resolve_steps_per_epoch(policy_batches, value_batches, config.steps_per_epoch)
     policy_passes = dataset_passes(steps_per_epoch, policy_batches)
-    value_passes = dataset_passes(steps_per_epoch, value_batches)
+    value_passes = float("nan") if value_batches is None else dataset_passes(steps_per_epoch, value_batches)
     policy_iter = infinite_iter(policy_loader)
-    value_iter = infinite_iter(value_loader)
+    value_iter = None if value_loader is None else infinite_iter(value_loader)
 
     os.makedirs(config.save_dir, exist_ok=True)
 
@@ -349,9 +363,11 @@ def train():
 
         writer.add_scalar("config/steps_per_epoch", steps_per_epoch, 0)
         writer.add_scalar("config/policy_passes_per_epoch", policy_passes, 0)
-        writer.add_scalar("config/value_passes_per_epoch", value_passes, 0)
+        if is_finite_metric(value_passes):
+            writer.add_scalar("config/value_passes_per_epoch", value_passes, 0)
         writer.add_scalar("config/batch_size", config.batch_size, 0)
-        writer.add_scalar("config/value_loss_weight", config.value_loss_weight, 0)
+        writer.add_scalar("config/value_loss_weight", effective_value_loss_weight, 0)
+        writer.add_scalar("config/policy_only", 1 if config.policy_only else 0, 0)
 
     layout = Layout()
     layout.split_column(Layout(name="header", size=1), Layout(name="body"), Layout(name="footer", size=1))
@@ -361,11 +377,12 @@ def train():
         terminal_width = shutil.get_terminal_size().columns
         b_str = f"{best:.4f}" if best != float("inf") else "---"
         p_str = f"{cur_pol:.4f}" if cur_pol else "---"
-        v_str = f"{cur_val:.4f}" if cur_val else "---"
+        v_str = f"{cur_val:.4f}" if is_finite_metric(cur_val) else "---"
         val_str = f"{cur_validation_loss:.4f}" if cur_validation_loss == cur_validation_loss else "---"
+        value_pass_label = f"{value_passes:.2f}x" if is_finite_metric(value_passes) else "---"
         text = (
             f"Device: {device_name}  |  Epoch: {cur_ep}/{config.epochs}  |  Steps: {steps_per_epoch}  |  "
-            f"Passes: P {policy_passes:.2f}x / V {value_passes:.2f}x  |  LR: {current_learning_rate(optimizer):.1e}  |  "
+            f"Passes: P {policy_passes:.2f}x / V {value_pass_label}  |  LR: {current_learning_rate(optimizer):.1e}  |  "
             f"Batch: {config.batch_size}  |  Best Val: {b_str}  |  Train: P {p_str} / V {v_str}  |  Val: {val_str}"
         )
         return Text(compact_label(text, terminal_width), style="bold cyan", justify="center")
@@ -387,16 +404,19 @@ def train():
                 progress_step.reset(step_task)
                 for _ in range(steps_per_epoch):
                     p_x, p_target, _, p_legal_mask = move_batch_to_device(next(policy_iter), device)
-                    v_x, _, v_target, _ = move_batch_to_device(next(value_iter), device)
 
                     optimizer.zero_grad(set_to_none=True)
                     with torch.autocast(device_type=device.type, enabled=use_mixed_precision):
                         p_logits, _ = model(p_x)
                         p_logits = apply_policy_mask(p_logits, p_legal_mask, p_target)
                         loss_p = policy_criterion(p_logits, p_target)
-                        _, v_pred = model(v_x)
-                        loss_v = value_criterion(v_pred, v_target)
-                        loss = loss_p + config.value_loss_weight * loss_v
+                        if value_iter is None:
+                            loss_v = torch.zeros((), device=device)
+                        else:
+                            v_x, _, v_target, _ = move_batch_to_device(next(value_iter), device)
+                            _, v_pred = model(v_x)
+                            loss_v = value_criterion(v_pred, v_target)
+                        loss = loss_p + effective_value_loss_weight * loss_v
 
                     scaler.scale(loss).backward()
                     scaler.unscale_(optimizer)
@@ -409,8 +429,8 @@ def train():
                     progress_step.advance(step_task)
 
                 avg_pol = total_pol_loss / steps_per_epoch
-                avg_val = total_val_loss / steps_per_epoch
-                avg_tot = loss_total(avg_pol, avg_val, config.value_loss_weight)
+                avg_val = float("nan") if value_iter is None else total_val_loss / steps_per_epoch
+                avg_tot = loss_total(avg_pol, avg_val, effective_value_loss_weight)
                 validation_total = float("nan")
                 policy_accuracy = float("nan")
                 value_mae = float("nan")
@@ -424,7 +444,7 @@ def train():
                         value_criterion,
                         device,
                     )
-                    validation_total = loss_total(val_pol, val_value, config.value_loss_weight)
+                    validation_total = loss_total(val_pol, val_value, effective_value_loss_weight)
                     scheduler.step(validation_total)
 
                     if is_improved(validation_total, best_validation_loss, config.min_improvement):
@@ -446,7 +466,8 @@ def train():
 
                 writer.add_scalar("loss/train_total", avg_tot, epoch)
                 writer.add_scalar("loss/train_policy", avg_pol, epoch)
-                writer.add_scalar("loss/train_value", avg_val, epoch)
+                if is_finite_metric(avg_val):
+                    writer.add_scalar("loss/train_value", avg_val, epoch)
 
                 if is_finite_metric(validation_total):
                     writer.add_scalar("loss/validation_total", validation_total, epoch)
