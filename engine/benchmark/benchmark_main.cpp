@@ -142,6 +142,9 @@ std::string reason_to_string(WinReason reason) {
   if (reason == WinReason::INVALID_MOVE) {
     return "INVALID_MOVE";
   }
+  if (reason == WinReason::DRAW_PROGRESS_RULE) {
+    return "DRAW_PROGRESS_RULE";
+  }
   return "DRAW_MAX_TURNS";
 }
 
