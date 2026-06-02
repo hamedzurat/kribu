@@ -71,10 +71,10 @@ inline constexpr int THREAD_COUNT = 32;
 inline constexpr std::array BENCHMARK_MATCHUPS = {
     // ── POLICY matchups ──────────────────────────────────────────────────────
     // zero randomness
-    MatchConfig{.player1Name = "Minimax8",       .player2Name = "Minimax8",           .games =    1,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "Minimax8",       .player2Name = "Minimax8",           .games =    2,  .maxTurns = 2048},
     MatchConfig{.player1Name = "Minimax8",       .player2Name = "MCTS800",            .games =    1,  .maxTurns = 2048},
     MatchConfig{.player1Name = "MCTS800",        .player2Name = "Minimax8",           .games =    1,  .maxTurns = 2048},
-    MatchConfig{.player1Name = "MCTS800",        .player2Name = "MCTS800",            .games =    1,  .maxTurns = 2048},
+    MatchConfig{.player1Name = "MCTS800",        .player2Name = "MCTS800",            .games =    2,  .maxTurns = 2048},
 
     // Same Mad vs Mad
     MatchConfig{.player1Name = "Minimax8_Mad2",    .player2Name = "Minimax8_Mad2",    .games = 2048,  .maxTurns = 2048},
