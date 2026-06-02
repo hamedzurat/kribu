@@ -28,7 +28,7 @@ namespace kribu::board {
 /**
  * @brief Rolling history buffer size for game repetition tracking.
  */
-inline constexpr int REPETITION_HISTORY_LIMIT = 24;
+inline constexpr int MAX_HISTORY_LIMIT = 64;
 
 /**
  * @struct boardState
@@ -64,7 +64,7 @@ struct boardState {
   /**
    * @brief Rolling history of position hashes to detect repetitions.
    */
-  std::array<u64, REPETITION_HISTORY_LIMIT> history{};
+  std::array<u64, MAX_HISTORY_LIMIT> history{};
 
   /**
    * @brief Count of valid hashes currently stored in the rolling history.

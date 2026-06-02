@@ -58,7 +58,7 @@ enum class GameResult : u8 { P1_WINS, P2_WINS, DRAW };
  * @enum WinReason
  * @brief Represents the reason why a player won or the game ended.
  */
-enum class WinReason : u8 { ELIMINATION, STALEMATE, INVALID_MOVE, DRAW_MAX_TURNS };
+enum class WinReason : u8 { ELIMINATION, STALEMATE, INVALID_MOVE, DRAW_MAX_TURNS, DRAW_PROGRESS_RULE };
 
 /**
  * @struct GameOutcome
@@ -382,6 +382,10 @@ inline int execute_move(
  * @brief Helper to handle game over scenario, determining the winner and win reason.
  */
 constexpr GameOutcome handle_game_over(GameStatus status, bool isP1Turn) noexcept {
+  if (status == GameStatus::DRAW_PROGRESS_RULE) {
+    return GameOutcome{.result = GameResult::DRAW, .reason = WinReason::DRAW_PROGRESS_RULE};
+  }
+
   bool meWins = (status == GameStatus::ME_WINS_ELIMINATION || status == GameStatus::ME_WINS_STALEMATE);
   GameResult result = (meWins == isP1Turn) ? GameResult::P1_WINS : GameResult::P2_WINS;
 

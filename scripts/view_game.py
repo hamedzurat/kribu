@@ -186,6 +186,7 @@ def select_game_from_duckdb(console: Console) -> int:
         "STALEMATE": "STAL",
         "INVALID_MOVE": "INVL",
         "DRAW_MAX_TURNS": "DRAW",
+        "DRAW_PROGRESS_RULE": "DRAW",
     }
 
     for col_idx in range(num_cols):

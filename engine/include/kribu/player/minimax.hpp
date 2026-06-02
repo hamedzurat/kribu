@@ -769,17 +769,6 @@ inline void store_tt_result(
 }
 
 /**
- * @brief Returns true if an alpha-beta node should use search-path repetition detection.
- * @details The rule engine already enforces repetition legality using the rolling
- *          history stored in the board state. Re-checking only the raw position hash
- *          on the active search path is too aggressive because it ignores that history
- *          context and can convert legal repeatable positions into artificial draws.
- */
-[[nodiscard]] inline bool should_check_search_path_repetition(const boardState& state) noexcept {
-  return state.historyCount == 0;
-}
-
-/**
  * @brief Core alpha-beta search with PVS, null-move pruning, LMR, and killer heuristic.
  * @param state The current board state.
  * @param depth The maximum search depth remaining.
@@ -792,7 +781,7 @@ inline void store_tt_result(
 [[nodiscard]] inline MinimaxResult alpha_beta(
     const boardState& state, int depth, i32 alpha, i32 beta, SearchContext& ctx, bool isRoot) noexcept {
   // Repetition/cycle detection on the active search path
-  if (!isRoot && should_check_search_path_repetition(state)) {
+  if (!isRoot) {
     for (int i = 0; i < ctx.pathSize; ++i) {
       if (ctx.searchPath[i] == state.hash) {
         return MinimaxResult{.score = 0, .moveId = -1};

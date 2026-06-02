@@ -205,6 +205,7 @@ def create_policy_data(
             WHERE
                 g.reason != 'INVALID_MOVE'
                 AND g.reason != 'DRAW_MAX_TURNS'
+                AND g.reason != 'DRAW_PROGRESS_RULE'
                 AND t.player_played != 'MadPlayer'
                 AND actor.player_type IN ('minimax', 'mcts')
                 AND p1.player_type IN ('minimax', 'mcts')
@@ -376,8 +377,8 @@ def create_value_data(
             COUNT(*) AS visit_count,
             MIN(value_label) AS min_value_label,
             MAX(value_label) AS max_value_label,
-            BOOL_OR(reason = 'DRAW_MAX_TURNS') AS seen_draw_game,
-            BOOL_OR(reason != 'DRAW_MAX_TURNS') AS seen_non_draw_game
+            BOOL_OR(reason IN ('DRAW_MAX_TURNS', 'DRAW_PROGRESS_RULE')) AS seen_draw_game,
+            BOOL_OR(reason NOT IN ('DRAW_MAX_TURNS', 'DRAW_PROGRESS_RULE')) AS seen_non_draw_game
         FROM turn_values
         GROUP BY
             me,

@@ -58,6 +58,11 @@ enum class GameStatus : i8 {
    * @brief Active player (me) has won because the opponent has no moves left (stalemate).
    */
   ME_WINS_STALEMATE = 2,
+
+  /**
+   * @brief Game is drawn due to progress limit (no capture for MAX_HISTORY_LIMIT moves).
+   */
+  DRAW_PROGRESS_RULE = 3,
 };
 
 /**
@@ -248,14 +253,14 @@ struct MoveList {
 
     next.activeCaptureIdx = -1;
 
-    if (next.historyCount < REPETITION_HISTORY_LIMIT) {
+    if (next.historyCount < MAX_HISTORY_LIMIT) {
       next.history[next.historyCount] = state.hash;
       next.historyCount++;
     } else {
-      for (int i = 0; i < REPETITION_HISTORY_LIMIT - 1; ++i) {
+      for (int i = 0; i < MAX_HISTORY_LIMIT - 1; ++i) {
         next.history[i] = next.history[i + 1];
       }
-      next.history[REPETITION_HISTORY_LIMIT - 1] = state.hash;
+      next.history[MAX_HISTORY_LIMIT - 1] = state.hash;
     }
   }
 
@@ -416,6 +421,10 @@ struct MoveList {
  * @return GameStatus::ME_WINS, GameStatus::OPP_WINS, or GameStatus::ONGOING.
  */
 [[nodiscard]] constexpr GameStatus get_game_status(const boardState& state) noexcept {
+  if (state.historyCount >= MAX_HISTORY_LIMIT) {
+    return GameStatus::DRAW_PROGRESS_RULE;
+  }
+
   if (piece_count(state.opp) == 0) {
     return GameStatus::ME_WINS_ELIMINATION;
   }

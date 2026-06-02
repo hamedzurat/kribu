@@ -7,7 +7,7 @@ from torch.utils.data import Dataset
 
 BITBOARD_OFFSETS = np.arange(37, dtype=np.uint64)
 CAPTURE_OFFSETS = np.arange(6, dtype=np.uint8)
-MAX_REPETITION_HISTORY = 24.0
+MAX_REPETITION_HISTORY = 64.0
 
 
 def legal_move_mask(me: int, opp: int, active_capture_idx: int, action_space: int) -> np.ndarray:
