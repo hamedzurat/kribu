@@ -451,10 +451,10 @@ TEST_CASE("Rule Engine - Rolling History and Repetition",  // NOLINT(readability
   // Since it already occurred twice, playing m_backward from state10 must be illegal!
   REQUIRE_FALSE(is_valid(state10, m_backward));
 
-  // Let's verify that a repeat older than 8 positions is allowed.
+  // Let's verify that a repeat older than REPETITION_HISTORY_LIMIT positions is allowed.
   // Pad the history of state10 with a unique dummy hash so the oldest history entry is dropped.
   boardState state10_padded = state10;
-  for (int k = 0; k < 8; ++k) {
+  for (int k = 0; k < REPETITION_HISTORY_LIMIT; ++k) {
     // Fill history with dummy values to push the original occurrences out of the window
     state10_padded.history[k] = 0x9999ULL + k;
   }

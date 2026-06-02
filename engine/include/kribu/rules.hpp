@@ -248,14 +248,14 @@ struct MoveList {
 
     next.activeCaptureIdx = -1;
 
-    if (next.historyCount < 8) {
+    if (next.historyCount < REPETITION_HISTORY_LIMIT) {
       next.history[next.historyCount] = state.hash;
       next.historyCount++;
     } else {
-      for (int i = 0; i < 7; ++i) {
+      for (int i = 0; i < REPETITION_HISTORY_LIMIT - 1; ++i) {
         next.history[i] = next.history[i + 1];
       }
-      next.history[7] = state.hash;
+      next.history[REPETITION_HISTORY_LIMIT - 1] = state.hash;
     }
   }
 

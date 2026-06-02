@@ -60,6 +60,7 @@ def create_policy_data(con: duckdb.DuckDBPyConnection, *, keepDuplicates: bool) 
             JOIN source.players AS p2 ON g.p2_name = p2.name
             WHERE
                 g.reason != 'INVALID_MOVE'
+                AND g.reason != 'DRAW_MAX_TURNS'
                 AND t.player_played != 'MadPlayer'
                 AND actor.player_type IN ('minimax', 'mcts')
                 AND p1.player_type IN ('minimax', 'mcts')

@@ -26,6 +26,11 @@
 namespace kribu::board {
 
 /**
+ * @brief Rolling history buffer size for game repetition tracking.
+ */
+inline constexpr int REPETITION_HISTORY_LIMIT = 24;
+
+/**
  * @struct boardState
  * @brief Represents the physical layout of pieces on the 37-node Sholo Guti board.
  * @details Uses two 64-bit integer bitmasks to represent player pieces, and a signed 8-bit
@@ -57,9 +62,9 @@ struct boardState {
   u64 hash = 0;
 
   /**
-   * @brief Rolling history of the last 8 position hashes to detect repetitions.
+   * @brief Rolling history of position hashes to detect repetitions.
    */
-  std::array<u64, 8> history{};
+  std::array<u64, REPETITION_HISTORY_LIMIT> history{};
 
   /**
    * @brief Count of valid hashes currently stored in the rolling history.
