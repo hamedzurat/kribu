@@ -190,6 +190,17 @@ ______________________________________________________________________
 
 ## Recommended Presets
 
+These presets are good first comparisons, not the only valid choices.
+
+Use them as a small sweep:
+
+1. build one unfiltered baseline
+1. build one moderately cleaned dataset
+1. optionally build one stricter policy dataset
+1. train and compare validation metrics and arena strength
+
+If one preset is clearly better, keep that one and adjust from there instead of trying many random combinations.
+
 ### Default
 
 ```bash
@@ -201,6 +212,8 @@ Use when:
 - you want maximum data
 - you want conservative behavior
 - you are still exploring trainer settings
+
+This is the baseline to compare everything else against.
 
 ### Cleaner policy, keep most value data
 
@@ -214,6 +227,8 @@ Use when:
 - you want to keep draw information
 - you want fewer loop-heavy draw-only states
 
+This is the most likely next step after the baseline.
+
 ### Stricter policy set
 
 ```bash
@@ -224,6 +239,79 @@ Use when:
 
 - you prefer fewer, cleaner policy rows
 - benchmark volume is already large
+- the baseline still looks too noisy
+
+Use this only if the moderate preset helps or if policy supervision still looks unstable.
+
+______________________________________________________________________
+
+## Suggested Workflow
+
+Start with three dataset builds and compare them:
+
+### 1. Baseline
+
+```bash
+make extract-data
+```
+
+Why:
+
+- tells you what the raw supervised signal can do
+- gives a reference point for all later filtering
+
+### 2. Moderate cleanup
+
+```bash
+make extract-data -- --min-policy-support 0.75 --max-draw-only-visits 8
+```
+
+Why:
+
+- removes weaker policy labels
+- trims the loopiest draw-only value states
+- usually keeps most of the useful data
+
+### 3. Strict policy cleanup
+
+```bash
+make extract-data -- --min-policy-visits 2 --min-policy-support 0.75 --max-draw-only-visits 8
+```
+
+Why:
+
+- removes one-off policy labels
+- keeps policy supervision cleaner when dataset size is already large
+
+After that, compare:
+
+- policy validation loss
+- policy accuracy
+- value validation loss or MAE
+- arena strength against your reference bots
+
+Pick the simplest preset that improves real play, not just training curves.
+
+______________________________________________________________________
+
+## How To Adjust After The First Sweep
+
+If baseline is best:
+
+- keep the unfiltered dataset
+- spend effort on better benchmark games instead of stronger filtering
+
+If moderate cleanup is best:
+
+- keep `--min-policy-support 0.75`
+- then optionally test nearby values like `0.70` or `0.80`
+
+If strict cleanup is best:
+
+- keep `--min-policy-visits 2`
+- only increase further if the dataset remains very large and policy still looks noisy
+
+Avoid changing many knobs at once. Change one thing, retrain, and compare.
 
 ______________________________________________________________________
 
