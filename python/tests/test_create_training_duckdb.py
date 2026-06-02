@@ -299,3 +299,59 @@ def test_build_training_duckdb_can_filter_low_support_policy_and_loop_heavy_draw
             (int(initialState.me), int(initialState.opp), -1, 0, 0, 0, 1.0, 4),
         ]
     )
+
+
+def test_build_training_duckdb_can_filter_to_named_teacher(tmp_path):
+    sourcePath = tmp_path / "source.duckdb"
+    outputPath = tmp_path / "training.duckdb"
+    create_source_duckdb(sourcePath)
+
+    policyCount, valueCount = create_training_duckdb.build_training_duckdb(
+        sourcePath,
+        outputPath,
+        teacherNames=["MinimaxA"],
+    )
+
+    assert policyCount == 2
+    assert valueCount == 4
+
+    con = duckdb.connect(str(outputPath), read_only=True)
+    try:
+        policyRows = con.execute(
+            """
+            SELECT me, opp, active_capture_idx, history_count, chosen_move, visit_count
+            FROM policy_data
+            ORDER BY me, opp, history_count
+            """
+        ).fetchall()
+        valueRows = con.execute(
+            """
+            SELECT me, opp, active_capture_idx, history_count, value_label, visit_count
+            FROM value_data
+            ORDER BY me, opp, history_count
+            """
+        ).fetchall()
+    finally:
+        con.close()
+
+    initialState = kribu.INITIAL_STATE
+    initialMove = kribu.all_possible_moves(initialState)[0]
+    initialNextState = kribu.flip_board(kribu.apply_move(initialState, initialMove))
+    replyMove = kribu.all_possible_moves(initialNextState)[0]
+    greedyState = kribu.boardState()
+    greedyState.me = 1 << 16
+    greedyState.opp = 1 << 0
+    drawState = kribu.boardState()
+    drawState.me = 1 << 18
+    drawState.opp = 1 << 5
+
+    assert policyRows == [
+        (int(initialState.me), int(initialState.opp), -1, 0, int(initialMove), 2),
+        (int(initialNextState.me), int(initialNextState.opp), -1, 1, int(replyMove), 1),
+    ]
+    assert valueRows == [
+        (int(greedyState.me), int(greedyState.opp), -1, 0, 1.0, 1),
+        (int(drawState.me), int(drawState.opp), -1, 0, 0.5, 1),
+        (int(initialState.me), int(initialState.opp), -1, 0, 1.0, 2),
+        (int(initialNextState.me), int(initialNextState.opp), -1, 1, 1.0, 1),
+    ]

@@ -29,6 +29,13 @@ def quote_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def sql_in_list(values: list[str]) -> str:
+    """Return a SQL tuple literal for a non-empty string list."""
+    if not values:
+        raise ValueError("sql_in_list requires at least one value")
+    return "(" + ", ".join(quote_literal(value) for value in values) + ")"
+
+
 def drop_existing_objects(con: duckdb.DuckDBPyConnection) -> None:
     """Remove existing tables and views from the output database."""
     objects = con.execute(
@@ -156,6 +163,7 @@ def create_policy_data(
     keepDuplicates: bool,
     minPolicyVisits: int,
     minPolicySupport: float,
+    teacherNames: list[str],
 ) -> None:
     """Create the randomized policy_data table.
 
@@ -163,11 +171,16 @@ def create_policy_data(
     @param keepDuplicates Whether to keep duplicate rows (has no effect if filtering/averaging).
     @param minPolicyVisits Minimum number of raw visits required to keep a policy state.
     @param minPolicySupport Minimum majority support required to keep a policy state.
+    @param teacherNames Optional actor-name allowlist for distillation from specific teachers.
     """
     if minPolicyVisits < 1:
         raise ValueError("minPolicyVisits must be at least 1")
     if minPolicySupport < 0.0 or minPolicySupport > 1.0:
         raise ValueError("minPolicySupport must be within [0.0, 1.0]")
+
+    teacherFilter = ""
+    if teacherNames:
+        teacherFilter = f"\n                AND t.player_played IN {sql_in_list(teacherNames)}"
 
     con.execute(
         f"""
@@ -196,6 +209,7 @@ def create_policy_data(
                 AND actor.player_type IN ('minimax', 'mcts')
                 AND p1.player_type IN ('minimax', 'mcts')
                 AND p2.player_type IN ('minimax', 'mcts')
+                {teacherFilter}
         ),
         move_counts AS (
             SELECT
@@ -281,12 +295,14 @@ def create_value_data(
     *,
     keepDuplicates: bool,
     maxDrawOnlyVisits: int,
+    teacherNames: list[str],
 ) -> None:
     """Create the randomized value_data table.
 
     @param con Reference to the DuckDB connection.
     @param keepDuplicates Whether to keep duplicate rows (has no effect if filtering/averaging).
     @param maxDrawOnlyVisits Maximum raw visits allowed for draw-only 0.5 states; 0 disables this filter.
+    @param teacherNames Optional actor-name allowlist for distillation from specific teachers.
     """
     if maxDrawOnlyVisits < 0:
         raise ValueError("maxDrawOnlyVisits must be non-negative")
@@ -301,6 +317,10 @@ def create_value_data(
                 AND visit_count > {maxDrawOnlyVisits}
             )
         """
+
+    teacherFilter = ""
+    if teacherNames:
+        teacherFilter = f"\n                AND t.player_played IN {sql_in_list(teacherNames)}"
 
     con.execute(
         f"""
@@ -326,6 +346,7 @@ def create_value_data(
                 g.reason != 'INVALID_MOVE'
                 AND t.player_played != 'MadPlayer'
                 AND actor.player_type IN ('minimax', 'mcts')
+                {teacherFilter}
         ),
         turn_values AS (
             SELECT
@@ -380,6 +401,7 @@ def build_training_duckdb(
     minPolicyVisits: int = DEFAULT_MIN_POLICY_VISITS,
     minPolicySupport: float = DEFAULT_MIN_POLICY_SUPPORT,
     maxDrawOnlyVisits: int = DEFAULT_MAX_DRAW_ONLY_VISITS,
+    teacherNames: list[str] | None = None,
 ) -> tuple[int, int]:
     """Build randomized policy_data and value_data tables in a DuckDB file.
 
@@ -389,11 +411,14 @@ def build_training_duckdb(
     @param minPolicyVisits Minimum number of raw visits required to keep a policy state.
     @param minPolicySupport Minimum majority support required to keep a policy state.
     @param maxDrawOnlyVisits Maximum raw visits allowed for draw-only 0.5 states; 0 disables this filter.
+    @param teacherNames Optional actor-name allowlist for distillation from specific teachers.
     """
     if not sourcePath.exists():
         raise FileNotFoundError(f"source DuckDB not found: {sourcePath}")
     if sourcePath.resolve() == outputPath.resolve():
         raise ValueError("source and output DuckDB paths must be different")
+    if teacherNames is None:
+        teacherNames = []
 
     outputPath.parent.mkdir(parents=True, exist_ok=True)
 
@@ -407,11 +432,13 @@ def build_training_duckdb(
             keepDuplicates=keepDuplicates,
             minPolicyVisits=minPolicyVisits,
             minPolicySupport=minPolicySupport,
+            teacherNames=teacherNames,
         )
         create_value_data(
             con,
             keepDuplicates=keepDuplicates,
             maxDrawOnlyVisits=maxDrawOnlyVisits,
+            teacherNames=teacherNames,
         )
         con.execute("DROP TABLE turn_history_features")
 
@@ -448,6 +475,12 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_MAX_DRAW_ONLY_VISITS,
         help="Drop draw-only value states with more than this many visits; 0 disables the filter.",
     )
+    parser.add_argument(
+        "--teacher",
+        action="append",
+        default=[],
+        help="Keep only turns played by the named teacher. Repeat to allow multiple teachers.",
+    )
     return parser.parse_args()
 
 
@@ -461,6 +494,7 @@ def main() -> None:
         minPolicyVisits=args.min_policy_visits,
         minPolicySupport=args.min_policy_support,
         maxDrawOnlyVisits=args.max_draw_only_visits,
+        teacherNames=args.teacher,
     )
     print(f"wrote {args.output}")
     print(f"policy_data rows: {policyCount}")
