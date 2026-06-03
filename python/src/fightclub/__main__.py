@@ -63,12 +63,16 @@ def calculate_elo(
             e1 = 1.0 / (1.0 + 10.0 ** ((r2 - r1) / 400.0))
             e2 = 1.0 / (1.0 + 10.0 ** ((r1 - r2) / 400.0))
 
+            win_reason = row.get("win_reason", "unknown")
             if winner == "player1":
-                s1, s2 = 1.0, 0.0
+                score_key = f"win_{win_reason}"
+                s1, s2 = config.SCORES.get(score_key, (1.0, 0.0))
             elif winner == "player2":
-                s1, s2 = 0.0, 1.0
+                score_key = f"win_{win_reason}"
+                s2, s1 = config.SCORES.get(score_key, (1.0, 0.0))
             else:
-                s1, s2 = 0.5, 0.5
+                score_key = f"draw_{win_reason}"
+                s1, s2 = config.SCORES.get(score_key, (0.5, 0.5))
 
             ratings[p1] = r1 + k_factor * (s1 - e1)
             ratings[p2] = r2 + k_factor * (s2 - e2)

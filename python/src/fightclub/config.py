@@ -1,4 +1,4 @@
-"""Configuration settings for the Fight Club tournament."""
+import os
 
 # File path to save/resume tournament matches
 CSV_PATH = "fightclub_results.csv"
@@ -16,7 +16,14 @@ MAX_TURNS = 1024
 # This should be an even number so that starting color is exactly split 50/50.
 GAMES_PER_PAIR = 100
 
-# Number of parallel worker processes for running games
-import os
-
 NUM_WORKERS = os.cpu_count() or 4
+
+# Elo update scores for different ending states.
+# Format: (winner_score, loser_score) or (draw_score_p1, draw_score_p2)
+SCORES = {
+    "win_elimination": (1.0, 0.0),
+    "win_stalemate": (1.0, 0.0),
+    "draw_progress_rule": (0.5, 0.5),
+    "draw_max_turns": (0.5, 0.5),
+    "draw_unknown": (0.5, 0.5),
+}

@@ -78,3 +78,39 @@ def test_play_game_basic():
     assert p2_time >= 0
     assert p1_moves >= 0
     assert p2_moves >= 0
+
+
+def test_calculate_elo_custom_scores(tmp_path):
+    import fightclub.config as config
+
+    csv_path = os.path.join(tmp_path, "test_custom_elo.csv")
+    with open(csv_path, mode="w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            [
+                "game_id",
+                "player1",
+                "player2",
+                "winner",
+                "win_reason",
+                "turns",
+                "p1_time",
+                "p2_time",
+                "p1_moves",
+                "p2_moves",
+            ]
+        )
+        # Custom draw score for max_turns
+        writer.writerow([1, "A", "B", "draw", "max_turns", 100, 1.0, 1.0, 50, 50])
+
+    original_scores = config.SCORES.copy()
+    try:
+        # Give a penalty to draws
+        config.SCORES["draw_max_turns"] = (0.2, 0.2)
+        ratings = calculate_elo(csv_path, ["A", "B"])
+
+        # Draw with 0.2 score for each instead of 0.5 should result in lower final ratings than 1500
+        assert ratings["A"] < 1500
+        assert ratings["B"] < 1500
+    finally:
+        config.SCORES = original_scores
