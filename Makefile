@@ -65,6 +65,9 @@ endif
 arena:
 	PYTHONPATH=python/src uv run python -m arena $(ARENA_ARGS) $(ARGS)
 
+fightclub:
+	PYTHONPATH=python/src uv run python -m fightclub
+
 duckdbui:
 	duckdb -cmd "CALL start_ui_server();" benchmark/dataset.duckdb
 
