@@ -222,6 +222,13 @@ def save_checkpoint(model, optimizer, scheduler, scaler, epoch: int, best_valida
     )
 
 
+def weighted_mean(losses: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+    """Return a numerically stable weighted mean for per-sample losses."""
+    sample_weights = weights.to(device=losses.device, dtype=losses.dtype)
+    weight_sum = sample_weights.sum().clamp_min(torch.finfo(losses.dtype).eps)
+    return (losses * sample_weights).sum() / weight_sum
+
+
 def apply_policy_mask(
     policy_logits: torch.Tensor,
     legal_mask: torch.Tensor | None,
@@ -240,10 +247,17 @@ def apply_policy_mask(
 
 def move_batch_to_device(batch, device):
     """Move a trainer batch to the selected device."""
-    features, policy_target, value_target, legal_mask = batch
+    features, policy_target, value_target, legal_mask, policy_weight, value_weight = batch
     if legal_mask is not None:
         legal_mask = legal_mask.to(device)
-    return features.to(device), policy_target.to(device), value_target.to(device), legal_mask
+    return (
+        features.to(device),
+        policy_target.to(device),
+        value_target.to(device),
+        legal_mask,
+        policy_weight.to(device),
+        value_weight.to(device),
+    )
 
 
 @torch.no_grad()
@@ -258,14 +272,15 @@ def evaluate(
     total_policy_loss = 0.0
     correct_policy = 0
     policy_samples = 0
-    for p_x, p_target, _, p_legal_mask in policy_loader:
+    for p_x, p_target, _, p_legal_mask, p_weight, _ in policy_loader:
         p_x = p_x.to(device)
         p_target = p_target.to(device)
+        p_weight = p_weight.to(device)
         if p_legal_mask is not None:
             p_legal_mask = p_legal_mask.to(device)
         p_logits, _ = model(p_x)
         p_logits = apply_policy_mask(p_logits, p_legal_mask, p_target)
-        total_policy_loss += policy_criterion(p_logits, p_target).item()
+        total_policy_loss += weighted_mean(policy_criterion(p_logits, p_target), p_weight).item()
         correct_policy += int((p_logits.argmax(dim=-1) == p_target).sum().item())
         policy_samples += p_target.numel()
 
@@ -278,13 +293,14 @@ def evaluate(
     total_value_loss = 0.0
     total_value_abs_error = 0.0
     value_samples = 0
-    for v_x, _, v_target, _ in value_loader:
+    for v_x, _, v_target, _, _, v_weight in value_loader:
         v_x = v_x.to(device)
         v_target = v_target.to(device)
+        v_weight = v_weight.to(device)
         _, v_pred = model(v_x)
-        total_value_loss += value_criterion(v_pred, v_target).item()
-        total_value_abs_error += float(torch.abs(v_pred - v_target).sum().item())
-        value_samples += v_target.numel()
+        total_value_loss += weighted_mean(value_criterion(v_pred, v_target), v_weight).item()
+        total_value_abs_error += float((torch.abs(v_pred - v_target) * v_weight).sum().item())
+        value_samples += float(v_weight.sum().item())
 
     value_loss = total_value_loss / len(value_loader)
     value_mae = total_value_abs_error / value_samples
@@ -315,8 +331,8 @@ def train():
         patience=config.lr_plateau_patience,
         min_lr=config.min_learning_rate,
     )
-    policy_criterion = nn.CrossEntropyLoss()
-    value_criterion = nn.MSELoss()
+    policy_criterion = nn.CrossEntropyLoss(reduction="none")
+    value_criterion = nn.MSELoss(reduction="none")
     use_mixed_precision = device.type == "cuda"
     scaler = torch.amp.GradScaler(device.type, enabled=use_mixed_precision)
 
@@ -403,19 +419,19 @@ def train():
 
                 progress_step.reset(step_task)
                 for _ in range(steps_per_epoch):
-                    p_x, p_target, _, p_legal_mask = move_batch_to_device(next(policy_iter), device)
+                    p_x, p_target, _, p_legal_mask, p_weight, _ = move_batch_to_device(next(policy_iter), device)
 
                     optimizer.zero_grad(set_to_none=True)
                     with torch.autocast(device_type=device.type, enabled=use_mixed_precision):
                         p_logits, _ = model(p_x)
                         p_logits = apply_policy_mask(p_logits, p_legal_mask, p_target)
-                        loss_p = policy_criterion(p_logits, p_target)
+                        loss_p = weighted_mean(policy_criterion(p_logits, p_target), p_weight)
                         if value_iter is None:
                             loss_v = torch.zeros((), device=device)
                         else:
-                            v_x, _, v_target, _ = move_batch_to_device(next(value_iter), device)
+                            v_x, _, v_target, _, _, v_weight = move_batch_to_device(next(value_iter), device)
                             _, v_pred = model(v_x)
-                            loss_v = value_criterion(v_pred, v_target)
+                            loss_v = weighted_mean(value_criterion(v_pred, v_target), v_weight)
                         loss = loss_p + effective_value_loss_weight * loss_v
 
                     scaler.scale(loss).backward()

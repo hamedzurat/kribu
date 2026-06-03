@@ -35,6 +35,10 @@ class InMemoryDuckDBDataset(Dataset):
         *,
         include_legal_mask: bool = False,
         action_space: int = 265,
+        policy_weight_power: float = 0.0,
+        value_weight_power: float = 0.0,
+        value_mixed_state_weight: float = 1.0,
+        value_draw_only_weight: float = 1.0,
     ):
         super().__init__()
 
@@ -54,6 +58,12 @@ class InMemoryDuckDBDataset(Dataset):
         self.history_count = data.get("history_count")
         self.current_repeat_count = data.get("current_repeat_count")
         self.current_flip_repeat_count = data.get("current_flip_repeat_count")
+        self.visit_count = data.get("visit_count")
+        self.move_support = data.get("move_support")
+        self.min_value_label = data.get("min_value_label")
+        self.max_value_label = data.get("max_value_label")
+        self.seen_draw_game = data.get("seen_draw_game")
+        self.seen_non_draw_game = data.get("seen_non_draw_game")
         self.include_legal_mask = include_legal_mask
         self.action_space = action_space
 
@@ -73,6 +83,41 @@ class InMemoryDuckDBDataset(Dataset):
             self.current_flip_repeat_count = np.zeros(len(self.me), dtype=np.float32)
         else:
             self.current_flip_repeat_count = self.current_flip_repeat_count.astype(np.float32, copy=False)
+        if self.visit_count is None:
+            self.visit_count = np.ones(len(self.me), dtype=np.float32)
+        else:
+            self.visit_count = self.visit_count.astype(np.float32, copy=False)
+        if self.move_support is None:
+            self.move_support = np.ones(len(self.me), dtype=np.float32)
+        else:
+            self.move_support = self.move_support.astype(np.float32, copy=False)
+        if self.min_value_label is None:
+            self.min_value_label = np.zeros(len(self.me), dtype=np.float32)
+        else:
+            self.min_value_label = self.min_value_label.astype(np.float32, copy=False)
+        if self.max_value_label is None:
+            self.max_value_label = np.zeros(len(self.me), dtype=np.float32)
+        else:
+            self.max_value_label = self.max_value_label.astype(np.float32, copy=False)
+        if self.seen_draw_game is None:
+            self.seen_draw_game = np.zeros(len(self.me), dtype=np.bool_)
+        else:
+            self.seen_draw_game = self.seen_draw_game.astype(np.bool_, copy=False)
+        if self.seen_non_draw_game is None:
+            self.seen_non_draw_game = np.zeros(len(self.me), dtype=np.bool_)
+        else:
+            self.seen_non_draw_game = self.seen_non_draw_game.astype(np.bool_, copy=False)
+
+        policy_weight = np.power(np.maximum(self.visit_count, 1.0), policy_weight_power) * self.move_support
+        value_weight = np.power(np.maximum(self.visit_count, 1.0), value_weight_power)
+
+        mixed_value_states = np.abs(self.min_value_label - self.max_value_label) > 1e-6
+        draw_only_states = self.seen_draw_game & ~self.seen_non_draw_game
+        value_weight = np.where(mixed_value_states, value_weight * value_mixed_state_weight, value_weight)
+        value_weight = np.where(draw_only_states, value_weight * value_draw_only_weight, value_weight)
+
+        self.policy_weight = normalize_sample_weights(policy_weight.astype(np.float32, copy=False))
+        self.value_weight = normalize_sample_weights(value_weight.astype(np.float32, copy=False))
 
     def __len__(self) -> int:
         return len(self.me)
@@ -80,7 +125,9 @@ class InMemoryDuckDBDataset(Dataset):
     def __getitem__(self, index: int) -> int:
         return index
 
-    def collate(self, indices: list[int]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    def collate(
+        self, indices: list[int]
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor, torch.Tensor]:
         idx = np.asarray(indices, dtype=np.int64)
         me_bits = ((self.me[idx, None] >> BITBOARD_OFFSETS) & np.uint64(1)).astype(np.float32, copy=False)
         opp_bits = ((self.opp[idx, None] >> BITBOARD_OFFSETS) & np.uint64(1)).astype(np.float32, copy=False)
@@ -105,6 +152,8 @@ class InMemoryDuckDBDataset(Dataset):
             value_target = torch.zeros(len(idx), dtype=torch.float32)
         else:
             value_target = torch.from_numpy(self.value_target[idx])
+        policy_weight = torch.from_numpy(self.policy_weight[idx])
+        value_weight = torch.from_numpy(self.value_weight[idx])
 
         legal_mask = None
         if self.include_legal_mask:
@@ -116,7 +165,7 @@ class InMemoryDuckDBDataset(Dataset):
             if self.policy_target is not None:
                 legal_mask.scatter_(1, policy_target[:, None], True)
 
-        return features, policy_target, value_target, legal_mask
+        return features, policy_target, value_target, legal_mask, policy_weight, value_weight
 
 
 class ModuloSplitDataset(Dataset):
@@ -184,8 +233,15 @@ def get_dataloaders(config):
         "policy_data",
         include_legal_mask=config.policy_legal_mask,
         action_space=config.action_space,
+        policy_weight_power=config.policy_weight_power,
     )
-    value_dataset = InMemoryDuckDBDataset(config.duckdb_path, "value_data")
+    value_dataset = InMemoryDuckDBDataset(
+        config.duckdb_path,
+        "value_data",
+        value_weight_power=config.value_weight_power,
+        value_mixed_state_weight=config.value_mixed_state_weight,
+        value_draw_only_weight=config.value_draw_only_weight,
+    )
     policy_train_dataset, policy_validation_dataset = split_dataset(policy_dataset, config.validation_fraction)
     value_train_dataset, value_validation_dataset = split_dataset(value_dataset, config.validation_fraction)
 
@@ -227,3 +283,11 @@ def get_dataloaders(config):
     )
 
     return policy_loader, value_loader, policy_validation_loader, value_validation_loader
+
+
+def normalize_sample_weights(weights: np.ndarray) -> np.ndarray:
+    """Normalize non-negative sample weights so the dataset mean stays close to 1."""
+    mean = float(np.mean(weights))
+    if mean <= 0.0:
+        return np.ones_like(weights, dtype=np.float32)
+    return (weights / mean).astype(np.float32, copy=False)

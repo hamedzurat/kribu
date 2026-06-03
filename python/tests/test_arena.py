@@ -63,3 +63,38 @@ def test_neural_player_selects_best_valid_move(tmp_path):
     )
 
     assert move_id == 1
+
+
+def test_neural_player_scales_repetition_features_like_trainer(tmp_path):
+    model = SholoGutiNet(input_features=83, hidden_dim=32, num_residual_blocks=1, action_space=265)
+    modelPath = os.path.join(tmp_path, "feature_scale_model.pt")
+    torch.save(model.state_dict(), modelPath)
+
+    player = NeuralPlayer(model_path=modelPath, device="cpu")
+
+    class CaptureModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.last_input = None
+
+        def forward(self, x):
+            self.last_input = x.detach().cpu()
+            batch = x.shape[0]
+            return torch.zeros(batch, 265), torch.zeros(batch)
+
+    capture_model = CaptureModel()
+    player.model = capture_model
+
+    state = INITIAL_STATE
+    state.historyCount = 64
+    move_id, _ = player.get_move(
+        state.me,
+        state.opp,
+        state.activeCaptureIdx,
+        valid_moves=[1],
+        state=state,
+    )
+
+    assert move_id == 1
+    assert capture_model.last_input is not None
+    assert capture_model.last_input[0, 80].item() == 1.0

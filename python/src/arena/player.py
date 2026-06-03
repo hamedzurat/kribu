@@ -9,6 +9,9 @@ from trainer.config import config
 from trainer.model import SholoGutiNet
 
 
+MAX_REPETITION_HISTORY = 64.0
+
+
 class NeuralPlayer:
     """A reusable class that loads a trained PyTorch model and provides move predictions."""
 
@@ -109,9 +112,9 @@ class NeuralPlayer:
             historyCount, currentRepeatCount, currentFlipRepeatCount = kribu.repetition_features(state)
             extra_features[:] = np.array(
                 [
-                    historyCount / 24.0,
-                    currentRepeatCount / 24.0,
-                    currentFlipRepeatCount / 24.0,
+                    historyCount / MAX_REPETITION_HISTORY,
+                    currentRepeatCount / MAX_REPETITION_HISTORY,
+                    currentFlipRepeatCount / MAX_REPETITION_HISTORY,
                 ],
                 dtype=np.float32,
             )

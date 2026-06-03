@@ -1,8 +1,9 @@
 import pytest
 import torch
 from torch.utils.data import Dataset
+import duckdb
 
-from trainer.dataset import legal_move_mask, split_dataset, validation_stride
+from trainer.dataset import InMemoryDuckDBDataset, legal_move_mask, split_dataset, validation_stride
 from trainer.model import SholoGutiNet
 from trainer.train import (
     apply_policy_mask,
@@ -13,6 +14,7 @@ from trainer.train import (
     render_line_chart,
     render_training_dashboard,
     resolve_steps_per_epoch,
+    weighted_mean,
 )
 from kribu import INITIAL_STATE, all_possible_moves
 
@@ -90,6 +92,13 @@ def test_apply_policy_mask_keeps_target_and_blocks_invalid_logits():
     assert masked[0, 1] < -1e20
 
 
+def test_weighted_mean_matches_manual_average():
+    losses = torch.tensor([1.0, 3.0, 10.0])
+    weights = torch.tensor([1.0, 2.0, 1.0])
+
+    assert weighted_mean(losses, weights).item() == pytest.approx(4.25)
+
+
 def test_metric_points_skips_nan_values():
     history = [(1, 3.0, float("nan"), 0.1, 0.4), (2, 2.5, 2.6, 0.2, 0.3)]
 
@@ -124,3 +133,75 @@ def test_model_outputs_policy_logits_and_bounded_value():
     assert value.shape == (4,)
     assert torch.all(value >= 0.0)
     assert torch.all(value <= 1.0)
+
+
+def test_in_memory_duckdb_dataset_builds_loop_aware_sample_weights(tmp_path):
+    db_path = tmp_path / "trainer_weights.duckdb"
+    con = duckdb.connect(str(db_path))
+    try:
+        con.execute(
+            """
+            CREATE TABLE policy_data (
+                me BIGINT,
+                opp BIGINT,
+                active_capture_idx TINYINT,
+                history_count INTEGER,
+                current_repeat_count INTEGER,
+                current_flip_repeat_count INTEGER,
+                chosen_move SMALLINT,
+                visit_count BIGINT,
+                distinct_move_count BIGINT,
+                chosen_move_count BIGINT,
+                move_support DOUBLE
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO policy_data VALUES
+                (1, 2, -1, 0, 0, 0, 7, 1, 1, 1, 1.0),
+                (3, 4, -1, 0, 0, 0, 8, 16, 2, 16, 1.0)
+            """
+        )
+        con.execute(
+            """
+            CREATE TABLE value_data (
+                me BIGINT,
+                opp BIGINT,
+                active_capture_idx TINYINT,
+                history_count INTEGER,
+                current_repeat_count INTEGER,
+                current_flip_repeat_count INTEGER,
+                value_label DOUBLE,
+                visit_count BIGINT,
+                min_value_label DOUBLE,
+                max_value_label DOUBLE,
+                seen_draw_game BOOLEAN,
+                seen_non_draw_game BOOLEAN
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO value_data VALUES
+                (1, 2, -1, 0, 0, 0, 0.5, 16, 0.5, 0.5, TRUE, FALSE),
+                (3, 4, -1, 0, 0, 0, 1.0, 16, 0.0, 1.0, FALSE, TRUE)
+            """
+        )
+    finally:
+        con.close()
+
+    policy_dataset = InMemoryDuckDBDataset(str(db_path), "policy_data", policy_weight_power=0.5)
+    value_dataset = InMemoryDuckDBDataset(
+        str(db_path),
+        "value_data",
+        value_weight_power=0.5,
+        value_mixed_state_weight=0.25,
+        value_draw_only_weight=0.2,
+    )
+
+    _, _, _, _, policy_weight, _ = policy_dataset.collate([0, 1])
+    _, _, _, _, _, value_weight = value_dataset.collate([0, 1])
+
+    assert policy_weight[1].item() > policy_weight[0].item()
+    assert value_weight[0].item() < value_weight[1].item()

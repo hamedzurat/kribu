@@ -78,6 +78,23 @@ class TrainerConfig:
     # What it does: Balances how much the network cares about getting the "Move" right (Policy) vs getting the "Win Probability" right (Value). Policy loss is usually Cross-Entropy (values ~2.0 to 5.0). Value loss is usually Mean Squared Error (values ~0.1 to 0.3).
     # When to adjust: If you notice your network is amazing at predicting moves but terrible at evaluating who is winning, increase `value_loss_weight` to `2.0` or `5.0`.
     value_loss_weight: float = 1.0
+    # # Policy Sample Weight Power
+    # What it does: Scales policy rows by `visit_count ** policy_weight_power * move_support`.
+    # Why it matters: Positions seen many times with unanimous teacher agreement should influence training more than
+    # one-off states.
+    policy_weight_power: float = 0.5
+    # # Value Sample Weight Power
+    # What it does: Scales value rows by `visit_count ** value_weight_power`.
+    # Why it matters: Averaged value labels from frequently revisited states are usually more stable.
+    value_weight_power: float = 0.5
+    # # Mixed-State Value Weight
+    # What it does: Down-weights states where the same exact position was labeled with different outcomes.
+    # Why it matters: These are noisy supervision targets for a one-step value head.
+    value_mixed_state_weight: float = 0.25
+    # # Draw-Only Value Weight
+    # What it does: Down-weights states only ever observed in draw-progress games.
+    # Why it matters: Overfitting these loop-heavy neutral states can make the model overly comfortable repeating.
+    value_draw_only_weight: float = 0.2
     # # Policy Only
     # What it does: Trains the network as a pure move imitator and skips value batches/metrics entirely.
     # When to adjust: Turn this on when you want a fast model-only player and the value head is not helping.
