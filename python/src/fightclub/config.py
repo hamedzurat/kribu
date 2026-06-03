@@ -14,7 +14,7 @@ MAX_TURNS = 1024
 
 # Total games to play per pair.
 # This should be an even number so that starting color is exactly split 50/50.
-GAMES_PER_PAIR = 100
+GAMES_PER_PAIR = 2
 
 # Number of parallel worker processes for running games
 import os
