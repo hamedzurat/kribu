@@ -30,6 +30,8 @@
   ];
 
   shellHook = ''
+    export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]}:''${LD_LIBRARY_PATH:-}"
+
     echo "===================================================="
     echo " Welcome to Kribu Dev Shell!"
     echo "===================================================="
