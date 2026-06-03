@@ -9,6 +9,7 @@ from trainer.train import (
     apply_policy_mask,
     dataset_passes,
     is_improved,
+    low_step_warning,
     loss_total,
     metric_points,
     render_line_chart,
@@ -72,6 +73,8 @@ def test_loss_and_improvement_helpers():
     assert loss_total(policy_loss=2.0, value_loss=float("nan"), value_loss_weight=0.0) == 2.0
     assert is_improved(metric=0.9, best_metric=1.0, min_improvement=0.01)
     assert not is_improved(metric=0.995, best_metric=1.0, min_improvement=0.01)
+    assert low_step_warning(steps_per_epoch=3, batch_size=8192) is not None
+    assert low_step_warning(steps_per_epoch=32, batch_size=4096) is None
 
 
 def test_legal_move_mask_matches_engine_moves():

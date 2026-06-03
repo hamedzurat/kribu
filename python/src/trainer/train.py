@@ -51,6 +51,17 @@ def current_learning_rate(optimizer: torch.optim.Optimizer) -> float:
     return optimizer.param_groups[0]["lr"]
 
 
+def low_step_warning(steps_per_epoch: int, batch_size: int) -> str | None:
+    """Return a warning string when the run is too small for stable supervised training."""
+    if steps_per_epoch >= 16:
+        return None
+    return (
+        f"Low data/update regime detected: only {steps_per_epoch} steps/epoch at batch_size={batch_size}. "
+        "This usually means the selected DuckDB is tiny or heavily filtered, which often memorizes without "
+        "learning a strong arena policy."
+    )
+
+
 def loss_total(policy_loss: float, value_loss: float, value_loss_weight: float) -> float:
     """Return the weighted combined trainer loss."""
     if value_loss_weight == 0.0 or not is_finite_metric(value_loss):
@@ -346,6 +357,11 @@ def train():
     steps_per_epoch = resolve_steps_per_epoch(policy_batches, value_batches, config.steps_per_epoch)
     policy_passes = dataset_passes(steps_per_epoch, policy_batches)
     value_passes = float("nan") if value_batches is None else dataset_passes(steps_per_epoch, value_batches)
+    policy_train_rows = len(policy_loader.dataset)
+    value_train_rows = 0 if value_loader is None else len(value_loader.dataset)
+    policy_validation_rows = 0 if policy_validation_loader is None else len(policy_validation_loader.dataset)
+    value_validation_rows = 0 if value_validation_loader is None else len(value_validation_loader.dataset)
+    run_warning = low_step_warning(steps_per_epoch, config.batch_size)
     policy_iter = infinite_iter(policy_loader)
     value_iter = None if value_loader is None else infinite_iter(value_loader)
 
@@ -382,8 +398,17 @@ def train():
         if is_finite_metric(value_passes):
             writer.add_scalar("config/value_passes_per_epoch", value_passes, 0)
         writer.add_scalar("config/batch_size", config.batch_size, 0)
+        writer.add_scalar("dataset/policy_train_rows", policy_train_rows, 0)
+        writer.add_scalar("dataset/policy_validation_rows", policy_validation_rows, 0)
+        writer.add_scalar("dataset/policy_batches", policy_batches, 0)
+        if value_loader is not None:
+            writer.add_scalar("dataset/value_train_rows", value_train_rows, 0)
+            writer.add_scalar("dataset/value_validation_rows", value_validation_rows, 0)
+            writer.add_scalar("dataset/value_batches", value_batches, 0)
         writer.add_scalar("config/value_loss_weight", effective_value_loss_weight, 0)
         writer.add_scalar("config/policy_only", 1 if config.policy_only else 0, 0)
+        if run_warning is not None:
+            writer.add_text("run/warning", run_warning)
 
     layout = Layout()
     layout.split_column(Layout(name="header", size=1), Layout(name="body"), Layout(name="footer", size=1))
@@ -398,6 +423,7 @@ def train():
         value_pass_label = f"{value_passes:.2f}x" if is_finite_metric(value_passes) else "---"
         text = (
             f"Device: {device_name}  |  Epoch: {cur_ep}/{config.epochs}  |  Steps: {steps_per_epoch}  |  "
+            f"Rows: P {policy_train_rows} / V {value_train_rows if value_loader is not None else 0}  |  "
             f"Passes: P {policy_passes:.2f}x / V {value_pass_label}  |  LR: {current_learning_rate(optimizer):.1e}  |  "
             f"Batch: {config.batch_size}  |  Best Val: {b_str}  |  Train: P {p_str} / V {v_str}  |  Val: {val_str}"
         )
