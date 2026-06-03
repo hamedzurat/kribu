@@ -42,6 +42,8 @@ def get_winner_and_reason(status, is_model_turn):
         winner = "opponent" if is_model_turn else "model"
         reason = "elimination" if status == kribu.GameStatus.OPP_WINS_ELIMINATION else "stalemate"
         return winner, reason
+    elif status == kribu.GameStatus.DRAW_PROGRESS_RULE:
+        return "draw", "progress_rule"
 
     return "draw", "unknown"
 
@@ -53,10 +55,13 @@ def make_dashboard(games_played, args, model_wins, opp_wins, draws, current_game
 
     # Count draw reasons dynamically from history_log for detailed top bar summary
     draw_max_turns = sum(1 for gh in history_log if gh["winner"] == "draw" and gh["reason"] == "max_turns")
+    draw_progress = sum(1 for gh in history_log if gh["winner"] == "draw" and gh["reason"] == "progress_rule")
 
     draw_details = []
     if draw_max_turns > 0:
         draw_details.append(f"max turns: {draw_max_turns}")
+    if draw_progress > 0:
+        draw_details.append(f"progress rule: {draw_progress}")
 
     draw_details_str = f" ({', '.join(draw_details)})" if draw_details else ""
 

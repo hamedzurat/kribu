@@ -85,7 +85,13 @@ def test_neural_player_scales_repetition_features_like_trainer(tmp_path):
     capture_model = CaptureModel()
     player.model = capture_model
 
-    state = INITIAL_STATE
+    from kribu import boardState
+
+    state = boardState()
+    state.me = INITIAL_STATE.me
+    state.opp = INITIAL_STATE.opp
+    state.activeCaptureIdx = INITIAL_STATE.activeCaptureIdx
+    state.hash = INITIAL_STATE.hash
     state.historyCount = 64
     move_id, _ = player.get_move(
         state.me,

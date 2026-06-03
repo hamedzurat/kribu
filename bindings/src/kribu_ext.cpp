@@ -185,6 +185,7 @@ NB_MODULE(kribu_ext, module) {  // NOLINT(readability-identifier-length, moderni
       .value("ONGOING", GameStatus::ONGOING)
       .value("ME_WINS_STALEMATE", GameStatus::ME_WINS_STALEMATE)
       .value("ME_WINS_ELIMINATION", GameStatus::ME_WINS_ELIMINATION)
+      .value("DRAW_PROGRESS_RULE", GameStatus::DRAW_PROGRESS_RULE)
       .export_values();
 
   module.attr("INITIAL_STATE") = INITIAL_STATE;
