@@ -28,9 +28,11 @@ def play_game_worker(task_args) -> tuple[int, str, str, str, str, int, float, fl
         "mcts_800": kribu.mcts_player_800,
         "minimax_2": kribu.minimax_player_2,
         "minimax_4": kribu.minimax_player_4,
+        "minimax_6": kribu.minimax_player_6,
         "minimax_8": kribu.minimax_player_8,
         "minimax_2_mad2": kribu.minimax_player_2_mad2,
         "minimax_4_mad2": kribu.minimax_player_4_mad2,
+        "minimax_6_mad2": kribu.minimax_player_6_mad2,
         "minimax_8_mad2": kribu.minimax_player_8_mad2,
     }
 
@@ -39,13 +41,15 @@ def play_game_worker(task_args) -> tuple[int, str, str, str, str, int, float, fl
         p1_fn = builtins[p1]
     elif p1_model_path:
         np1 = NeuralPlayer(model_path=p1_model_path)
-        p1_fn = lambda state: np1.get_move(
-            me_mask=state.me,
-            opp_mask=state.opp,
-            active_capture_idx=state.activeCaptureIdx,
-            valid_moves=list(kribu.all_possible_moves(state)),
-            state=state,
-        )[0]
+
+        def p1_fn(state):
+            return np1.get_move(
+                me_mask=state.me,
+                opp_mask=state.opp,
+                active_capture_idx=state.activeCaptureIdx,
+                valid_moves=list(kribu.all_possible_moves(state)),
+                state=state,
+            )[0]
     else:
         raise ValueError(f"Unknown player: {p1}")
 
@@ -54,13 +58,15 @@ def play_game_worker(task_args) -> tuple[int, str, str, str, str, int, float, fl
         p2_fn = builtins[p2]
     elif p2_model_path:
         np2 = NeuralPlayer(model_path=p2_model_path)
-        p2_fn = lambda state: np2.get_move(
-            me_mask=state.me,
-            opp_mask=state.opp,
-            active_capture_idx=state.activeCaptureIdx,
-            valid_moves=list(kribu.all_possible_moves(state)),
-            state=state,
-        )[0]
+
+        def p2_fn(state):
+            return np2.get_move(
+                me_mask=state.me,
+                opp_mask=state.opp,
+                active_capture_idx=state.activeCaptureIdx,
+                valid_moves=list(kribu.all_possible_moves(state)),
+                state=state,
+            )[0]
     else:
         raise ValueError(f"Unknown player: {p2}")
 

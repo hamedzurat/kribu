@@ -2,8 +2,7 @@
 
 import os
 import csv
-import kribu
-from fightclub.__main__ import calculate_elo, calculate_time_stats, play_game_worker
+from fightclub.__main__ import calculate_elo, calculate_time_stats, play_game_worker, write_summary_file
 
 
 def test_calculate_elo_basic(tmp_path):
@@ -114,3 +113,20 @@ def test_calculate_elo_custom_scores(tmp_path):
         assert ratings["B"] < 1500
     finally:
         config.SCORES = original_scores
+
+
+def test_write_summary_file(tmp_path):
+    ratings = {"A": 1600.0, "B": 1450.0}
+    avgTimes = {"A": 0.123, "B": 0.456}
+    savePath = os.path.join(tmp_path, "summary.md")
+    write_summary_file(ratings, avgTimes, savePath)
+
+    assert os.path.exists(savePath)
+    with open(savePath, "r", encoding="utf-8") as f:
+        summaryContent = f.read()
+
+    assert "# Fight Club Tournament Summary" in summaryContent
+    assert "A" in summaryContent
+    assert "B" in summaryContent
+    assert "1600.0" in summaryContent
+    assert "0.123" in summaryContent

@@ -6,6 +6,9 @@ CSV_PATH = "fightclub_results.csv"
 # File path to save the generated Elo vs time graph
 PLOT_PATH = "elo_time_tradeoff.png"
 
+# File path to save the tournament summary (for AI readability)
+SUMMARY_PATH = "fightclub_summary.md"
+
 # Directory containing the .pt model files
 MODELS_DIR = "models"
 

@@ -47,6 +47,10 @@ static int minimax_player_8_py(const boardState& state) {
   return minimax_player_maker<8>(state);
 }
 
+static int minimax_player_6_py(const boardState& state) {
+  return minimax_player_maker<6>(state);
+}
+
 static int minimax_player_4_py(const boardState& state) {
   return minimax_player_maker<4>(state);
 }
@@ -62,6 +66,15 @@ static int minimax_player_8_mad2_py(const boardState& state) {
     return select_random(state);
   }
   return minimax_player_maker<8>(state);
+}
+
+static int minimax_player_6_mad2_py(const boardState& state) {
+  thread_local std::mt19937 rng(std::random_device{}());
+  std::uniform_int_distribution<int> dist(0, 99);
+  if (dist(rng) < 2) {
+    return select_random(state);
+  }
+  return minimax_player_maker<6>(state);
 }
 
 static int minimax_player_4_mad2_py(const boardState& state) {
@@ -256,6 +269,8 @@ NB_MODULE(kribu_ext, module) {  // NOLINT(readability-identifier-length, moderni
   module.def(
       "minimax_player_4", &minimax_player_4_py, nb::arg("state"), "Run minimax search with depth 4 and return move ID");
   module.def(
+      "minimax_player_6", &minimax_player_6_py, nb::arg("state"), "Run minimax search with depth 6 and return move ID");
+  module.def(
       "minimax_player_8", &minimax_player_8_py, nb::arg("state"), "Run minimax search with depth 8 and return move ID");
   module.def("minimax_player_2_mad2",
              &minimax_player_2_mad2_py,
@@ -265,6 +280,10 @@ NB_MODULE(kribu_ext, module) {  // NOLINT(readability-identifier-length, moderni
              &minimax_player_4_mad2_py,
              nb::arg("state"),
              "Run depth-4 minimax with benchmark-style 2% random move injection and return move ID");
+  module.def("minimax_player_6_mad2",
+             &minimax_player_6_mad2_py,
+             nb::arg("state"),
+             "Run depth-6 minimax with benchmark-style 2% random move injection and return move ID");
   module.def("minimax_player_8_mad2",
              &minimax_player_8_mad2_py,
              nb::arg("state"),

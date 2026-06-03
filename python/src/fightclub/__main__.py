@@ -23,9 +23,7 @@ from rich.progress import Progress, BarColumn, TextColumn
 # Add python/src to sys.path if not present
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import kribu
 import fightclub.config as config
-from arena.player import NeuralPlayer
 from fightclub.worker import play_game_worker
 
 
@@ -118,7 +116,7 @@ def calculate_time_stats(csv_path: str, player_names: list[str]) -> dict[str, fl
 def plot_elo_time(ratings: dict[str, float], avg_times: dict[str, float], save_path: str) -> None:
     # Use a clean, modern style
     plt.style.use("seaborn-v0_8-whitegrid" if "seaborn-v0_8-whitegrid" in plt.style.available else "default")
-    fig, ax = plt.subplots(figsize=(11, 7), dpi=150)
+    fig, ax = plt.subplots(figsize=(11, 7), dpi=300)
 
     # Convert to arrays
     names = list(ratings.keys())
@@ -132,7 +130,7 @@ def plot_elo_time(ratings: dict[str, float], avg_times: dict[str, float], save_p
     # Color map
     colors = plt.cm.viridis(np.linspace(0.1, 0.9, len(names)))
 
-    scatter = ax.scatter(x_adjusted, y, c=colors, s=200, alpha=0.85, edgecolors="black", linewidths=1.2)
+    ax.scatter(x_adjusted, y, c=colors, s=100, alpha=0.85, edgecolors="black", linewidths=1.2)
 
     # Annotate player names
     for i, name in enumerate(names):
@@ -164,6 +162,28 @@ def plot_elo_time(ratings: dict[str, float], avg_times: dict[str, float], save_p
     plt.close()
 
 
+## @brief Writes a human- and AI-readable Markdown summary of the tournament standings.
+#  @param ratings Dictionary mapping player names to ELO ratings.
+#  @param avgTimes Dictionary mapping player names to average time per move.
+#  @param savePath Path to save the Markdown summary.
+def write_summary_file(
+    ratings: dict[str, float],
+    avgTimes: dict[str, float],
+    savePath: str,
+) -> None:
+    sortedPlayers = sorted(ratings.keys(), key=lambda name: ratings[name], reverse=True)
+
+    with open(savePath, mode="w", encoding="utf-8") as f:
+        f.write("# Fight Club Tournament Summary\n\n")
+        f.write(f"Last Updated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        f.write("## ELO Standings Leaderboard\n\n")
+        f.write("| Rank | Player | Elo Rating | Avg Time/Move (s) |\n")
+        f.write("| :---: | :--- | :---: | :---: |\n")
+        for rank, name in enumerate(sortedPlayers, 1):
+            f.write(f"| {rank} | {name} | {ratings[name]:.1f} | {avgTimes.get(name, 0.0):.5f} |\n")
+        f.write("\n")
+
+
 ## @brief Main entry point to register players, run matches, update ratings, and plot.
 def main() -> None:
     console = Console()
@@ -182,9 +202,11 @@ def main() -> None:
         "mcts_800",
         "minimax_2",
         "minimax_4",
+        "minimax_6",
         "minimax_8",
         "minimax_2_mad2",
         "minimax_4_mad2",
+        "minimax_6_mad2",
         "minimax_8_mad2",
     ]
 
@@ -269,10 +291,12 @@ def main() -> None:
         elo_ratings = calculate_elo(config.CSV_PATH, player_names)
         avg_times = calculate_time_stats(config.CSV_PATH, player_names)
         plot_elo_time(elo_ratings, avg_times, config.PLOT_PATH)
+        write_summary_file(elo_ratings, avg_times, config.SUMMARY_PATH)
 
         if not remaining_schedule:
             console.print("[bold green]All tournament games have already been completed![/bold green]")
             console.print(f"Elo vs time plot updated at: [bold yellow]{config.PLOT_PATH}[/bold yellow]")
+            console.print(f"Standings summary updated at: [bold yellow]{config.SUMMARY_PATH}[/bold yellow]")
             return
 
         with Live(
@@ -334,6 +358,7 @@ def main() -> None:
                             completed_games_count += 1
                             if completed_games_count % 10 == 0 or completed_games_count == total_games:
                                 plot_elo_time(elo_ratings, avg_times, config.PLOT_PATH)
+                                write_summary_file(elo_ratings, avg_times, config.SUMMARY_PATH)
 
                             # Update progress bar
                             progress_bar.update(task_id, completed=completed_games_count)
@@ -385,9 +410,11 @@ def main() -> None:
 
         # Final plot update
         plot_elo_time(elo_ratings, avg_times, config.PLOT_PATH)
+        write_summary_file(elo_ratings, avg_times, config.SUMMARY_PATH)
         console.print("\n[bold green]Tournament completed successfully![/bold green]")
         console.print(f"Results saved to [bold yellow]{config.CSV_PATH}[/bold yellow].")
         console.print(f"Performance chart saved to [bold yellow]{config.PLOT_PATH}[/bold yellow].")
+        console.print(f"Standings summary saved to [bold yellow]{config.SUMMARY_PATH}[/bold yellow].")
 
     except KeyboardInterrupt:
         console.print("\n[bold yellow]Tournament interrupted by user (Ctrl+C). Standings saved.[/bold yellow]")
