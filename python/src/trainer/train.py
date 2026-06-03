@@ -36,7 +36,9 @@ def resolve_steps_per_epoch(policy_batches: int, value_batches: int | None, requ
         return policy_batches
     if value_batches <= 0:
         raise ValueError("value dataloader must not be empty when provided")
-    return max(policy_batches, value_batches)
+    # Policy quality dominates arena strength, so default scheduling must not replay a
+    # tiny policy dataset many times per epoch just because the value dataset is larger.
+    return policy_batches
 
 
 def dataset_passes(steps_per_epoch: int, batches_per_dataset: int) -> float:
@@ -60,6 +62,25 @@ def low_step_warning(steps_per_epoch: int, batch_size: int) -> str | None:
         "This usually means the selected DuckDB is tiny or heavily filtered, which often memorizes without "
         "learning a strong arena policy."
     )
+
+
+def policy_replay_warning(policy_passes: float, value_passes: float) -> str | None:
+    """Return a warning string when one dataset is replayed far more than the other."""
+    if policy_passes <= 1.5 and value_passes <= 1.5:
+        return None
+    if policy_passes > value_passes * 2.0 and policy_passes > 1.5:
+        return (
+            f"Policy oversampling detected: policy passes/epoch={policy_passes:.2f}, "
+            f"value passes/epoch={value_passes:.2f}. This usually hurts arena strength by "
+            "memorizing move labels faster than they generalize."
+        )
+    if value_passes > policy_passes * 2.0 and value_passes > 1.5:
+        return (
+            f"Value oversampling detected: policy passes/epoch={policy_passes:.2f}, "
+            f"value passes/epoch={value_passes:.2f}. This can bias training toward value "
+            "improvements while move selection stays weak."
+        )
+    return None
 
 
 def loss_total(policy_loss: float, value_loss: float, value_loss_weight: float) -> float:
@@ -362,6 +383,7 @@ def train():
     policy_validation_rows = 0 if policy_validation_loader is None else len(policy_validation_loader.dataset)
     value_validation_rows = 0 if value_validation_loader is None else len(value_validation_loader.dataset)
     run_warning = low_step_warning(steps_per_epoch, config.batch_size)
+    replay_warning = None if value_batches is None else policy_replay_warning(policy_passes, value_passes)
     policy_iter = infinite_iter(policy_loader)
     value_iter = None if value_loader is None else infinite_iter(value_loader)
 
@@ -409,6 +431,8 @@ def train():
         writer.add_scalar("config/policy_only", 1 if config.policy_only else 0, 0)
         if run_warning is not None:
             writer.add_text("run/warning", run_warning)
+        if replay_warning is not None:
+            writer.add_text("run/replay_warning", replay_warning)
 
     layout = Layout()
     layout.split_column(Layout(name="header", size=1), Layout(name="body"), Layout(name="footer", size=1))
@@ -421,11 +445,15 @@ def train():
         v_str = f"{cur_val:.4f}" if is_finite_metric(cur_val) else "---"
         val_str = f"{cur_validation_loss:.4f}" if cur_validation_loss == cur_validation_loss else "---"
         value_pass_label = f"{value_passes:.2f}x" if is_finite_metric(value_passes) else "---"
+        warning_label = ""
+        if replay_warning is not None:
+            warning_label = "  |  Warning: replay imbalance"
         text = (
             f"Device: {device_name}  |  Epoch: {cur_ep}/{config.epochs}  |  Steps: {steps_per_epoch}  |  "
             f"Rows: P {policy_train_rows} / V {value_train_rows if value_loader is not None else 0}  |  "
             f"Passes: P {policy_passes:.2f}x / V {value_pass_label}  |  LR: {current_learning_rate(optimizer):.1e}  |  "
             f"Batch: {config.batch_size}  |  Best Val: {b_str}  |  Train: P {p_str} / V {v_str}  |  Val: {val_str}"
+            f"{warning_label}"
         )
         return Text(compact_label(text, terminal_width), style="bold cyan", justify="center")
 

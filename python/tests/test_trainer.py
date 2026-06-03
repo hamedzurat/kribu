@@ -10,6 +10,7 @@ from trainer.train import (
     dataset_passes,
     is_improved,
     low_step_warning,
+    policy_replay_warning,
     loss_total,
     metric_points,
     render_line_chart,
@@ -29,7 +30,7 @@ class IndexDataset(Dataset):
 
 
 def test_resolve_steps_per_epoch_uses_larger_loader_by_default():
-    assert resolve_steps_per_epoch(policy_batches=640, value_batches=647, requested_steps=None) == 647
+    assert resolve_steps_per_epoch(policy_batches=640, value_batches=647, requested_steps=None) == 640
 
 
 def test_resolve_steps_per_epoch_supports_policy_only():
@@ -75,6 +76,8 @@ def test_loss_and_improvement_helpers():
     assert not is_improved(metric=0.995, best_metric=1.0, min_improvement=0.01)
     assert low_step_warning(steps_per_epoch=3, batch_size=8192) is not None
     assert low_step_warning(steps_per_epoch=32, batch_size=4096) is None
+    assert policy_replay_warning(policy_passes=18.2, value_passes=1.0) is not None
+    assert policy_replay_warning(policy_passes=1.0, value_passes=1.0) is None
 
 
 def test_legal_move_mask_matches_engine_moves():

@@ -99,7 +99,12 @@ def make_dashboard(games_played, args, model_wins, opp_wins, draws, current_game
         game_id_str = f"{gh['game_id']}*" if gh["model_started"] == "Yes" else str(gh["game_id"])
         win_by_pieces = abs(gh.get("model_pieces", 0) - gh.get("opp_pieces", 0))
         win_by_str = f"{win_by_pieces} pcs" if gh["winner"] in ("model", "opponent") else "-"
-        time_str = f"{gh.get('model_time', 0.0):.1f}s / {gh.get('opp_time', 0.0):.1f}s"
+
+        m_time = gh.get("model_time", 0.0)
+        o_time = gh.get("opp_time", 0.0)
+        ratio = (o_time / m_time) if m_time > 0 else 0.0
+        speed_suffix = f" {ratio:.1f}x" if m_time > 0 and o_time > 0 else ""
+        time_str = f"{m_time:.3f} / {o_time:.3f}{speed_suffix}"
 
         stats_table.add_row(
             game_id_str,
@@ -123,6 +128,7 @@ def make_dashboard(games_played, args, model_wins, opp_wins, draws, current_game
     game_details.add_row("Current Turn:", f"[bold yellow]{current_game_info.get('turn_idx', 0)}[/bold yellow]")
     game_details.add_row("Model Pieces:", f"[green]{current_game_info.get('model_pieces', 16)}[/green]")
     game_details.add_row("Opponent Pieces:", f"[red]{current_game_info.get('opp_pieces', 16)}[/red]")
+    game_details.add_row("Model Speed (avg):", f"[cyan]{current_game_info.get('model_speed', 'N/A')}[/cyan]")
     game_details.add_row("Last Move Played:", f"[bold white]{current_game_info.get('last_move', 'None')}[/bold white]")
     game_details.add_row(
         "Active Capture Node:", f"[bold yellow]{current_game_info.get('active_cap', 'None')}[/bold yellow]"
@@ -224,6 +230,9 @@ def main():
                 model_time = 0.0
                 opp_time = 0.0
 
+                # Track moves/decisions count
+                model_moves = 0
+
                 # Track moves played in the current game
                 moves_played = []
 
@@ -259,6 +268,7 @@ def main():
                         "last_move": last_move_str,
                         "active_cap": str(state.activeCaptureIdx) if state.activeCaptureIdx != -1 else "None",
                         "moves_history": " -> ".join(moves_played),
+                        "model_speed": f"{(opp_time / model_time):.1f}x" if model_time > 0 else "0.0x",
                     }
                     live.update(
                         make_dashboard(
@@ -292,6 +302,7 @@ def main():
                             state=state,
                         )
                         model_time += time.perf_counter() - start_t
+                        model_moves += 1
                     else:
                         # Opponent selection
                         if args.opponent == "minimax":
@@ -357,6 +368,7 @@ def main():
                     "opp_pieces": opp_pieces,
                     "model_time": model_time,
                     "opp_time": opp_time,
+                    "model_moves": model_moves,
                 }
                 history_log.append(game_result)
 
