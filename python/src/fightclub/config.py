@@ -22,7 +22,7 @@ MAX_TURNS = 512
 GAMES_PER_PAIR = 20
 
 # Leave one core free so the machine remains usable while tournaments are running.
-NUM_WORKERS = max(1, min(8, (os.cpu_count() or 4) - 1))
+NUM_WORKERS = (os.cpu_count() or 4) - 1
 
 # Elo update scores for different ending states.
 # Format: (winner_score, loser_score) or (draw_score_p1, draw_score_p2)
