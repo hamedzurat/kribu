@@ -118,7 +118,7 @@ def plot_elo_time(
 ) -> None:
     # Use a clean, modern style
     plt.style.use("seaborn-v0_8-whitegrid" if "seaborn-v0_8-whitegrid" in plt.style.available else "default")
-    fig, ax = plt.subplots(figsize=(11, 7), dpi=300)
+    fig, ax = plt.subplots(figsize=(11, 21), dpi=300)
 
     # Convert to arrays and convert seconds to milliseconds
     names = list(ratings.keys())
@@ -135,29 +135,23 @@ def plot_elo_time(
 
     ax.scatter(xMs, y, c=colors, s=100, alpha=0.85, edgecolors="black", linewidths=1.2)
 
-    # Annotate player names with 4-way alternating offsets to prevent overlaps
+    # Annotate player names always on top (using short aliases for the labels only)
     for i, name in enumerate(names):
-        cycle = i % 4
-        if cycle == 0:
-            xytext = (0, 12)
-            ha, va = "center", "bottom"
-        elif cycle == 1:
-            xytext = (0, -20)
-            ha, va = "center", "top"
-        elif cycle == 2:
-            xytext = (15, 0)
-            ha, va = "left", "center"
-        else:
-            xytext = (-15, 0)
-            ha, va = "right", "center"
+        shortLabel = name
+        if shortLabel.startswith("minimax_"):
+            shortLabel = "mm" + shortLabel[len("minimax_") :]
+        elif shortLabel.startswith("mcts_"):
+            shortLabel = "m" + shortLabel[len("mcts_") :]
+        if shortLabel.endswith("_mad2"):
+            shortLabel = shortLabel[:-5] + "_2"
 
         ax.annotate(
-            name,
+            shortLabel,
             (xMs[i], y[i]),
             textcoords="offset points",
-            xytext=xytext,
-            ha=ha,
-            va=va,
+            xytext=(0, 12),
+            ha="center",
+            va="bottom",
             fontsize=8,
             fontweight="bold",
             bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.75, ec="grey", lw=0.5),
@@ -208,6 +202,7 @@ def main() -> None:
     # Create directories if they don't exist
     os.makedirs(config.MODELS_DIR, exist_ok=True)
 
+    # 1. Register players
     # 1. Register players
     player_names = [
         "random",
