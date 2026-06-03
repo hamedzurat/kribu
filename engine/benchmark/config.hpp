@@ -83,10 +83,12 @@ inline constexpr std::array BENCHMARK_MATCHUPS = {
 
     // ── VALUE matchups ───────────────────────────────────────────────────────
     // Only keep matchups that can label Minimax8 positions directly.
+    // Random remains high-volume because it is stochastic and produced unique games.
+    // Greedy is deterministic, so repeated games mostly duplicate the same transcripts.
     MatchConfig{.player1Name = "Minimax8",      .player2Name = "RandomPlayer",  .games = 2048,  .maxTurns = 1024},
     MatchConfig{.player1Name = "RandomPlayer",  .player2Name = "Minimax8",      .games = 2048,  .maxTurns = 1024},
-    MatchConfig{.player1Name = "Minimax8",      .player2Name = "GreedyPlayer",  .games = 2048,  .maxTurns = 1024},
-    MatchConfig{.player1Name = "GreedyPlayer",  .player2Name = "Minimax8",      .games = 2048,  .maxTurns = 1024},
+    MatchConfig{.player1Name = "Minimax8",      .player2Name = "GreedyPlayer",  .games = 1,     .maxTurns = 1024},
+    MatchConfig{.player1Name = "GreedyPlayer",  .player2Name = "Minimax8",      .games = 1,     .maxTurns = 1024},
     // clang-format on
 };
 
