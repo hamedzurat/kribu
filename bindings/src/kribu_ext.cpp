@@ -55,6 +55,10 @@ static int minimax_player_4_py(const boardState& state) {
   return minimax_player_maker<4>(state);
 }
 
+static int minimax_player_3_py(const boardState& state) {
+  return minimax_player_maker<3>(state);
+}
+
 static int minimax_player_2_py(const boardState& state) {
   return minimax_player_maker<2>(state);
 }
@@ -84,6 +88,15 @@ static int minimax_player_4_mad2_py(const boardState& state) {
     return select_random(state);
   }
   return minimax_player_maker<4>(state);
+}
+
+static int minimax_player_3_mad2_py(const boardState& state) {
+  thread_local std::mt19937 rng(std::random_device{}());
+  std::uniform_int_distribution<int> dist(0, 99);
+  if (dist(rng) < 2) {
+    return select_random(state);
+  }
+  return minimax_player_maker<3>(state);
 }
 
 static int minimax_player_2_mad2_py(const boardState& state) {
@@ -267,6 +280,8 @@ NB_MODULE(kribu_ext, module) {  // NOLINT(readability-identifier-length, moderni
   module.def(
       "minimax_player_2", &minimax_player_2_py, nb::arg("state"), "Run minimax search with depth 2 and return move ID");
   module.def(
+      "minimax_player_3", &minimax_player_3_py, nb::arg("state"), "Run minimax search with depth 3 and return move ID");
+  module.def(
       "minimax_player_4", &minimax_player_4_py, nb::arg("state"), "Run minimax search with depth 4 and return move ID");
   module.def(
       "minimax_player_6", &minimax_player_6_py, nb::arg("state"), "Run minimax search with depth 6 and return move ID");
@@ -276,6 +291,10 @@ NB_MODULE(kribu_ext, module) {  // NOLINT(readability-identifier-length, moderni
              &minimax_player_2_mad2_py,
              nb::arg("state"),
              "Run depth-2 minimax with benchmark-style 2% random move injection and return move ID");
+  module.def("minimax_player_3_mad2",
+             &minimax_player_3_mad2_py,
+             nb::arg("state"),
+             "Run depth-3 minimax with benchmark-style 2% random move injection and return move ID");
   module.def("minimax_player_4_mad2",
              &minimax_player_4_mad2_py,
              nb::arg("state"),

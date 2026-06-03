@@ -113,35 +113,52 @@ def calculate_time_stats(csv_path: str, player_names: list[str]) -> dict[str, fl
 #  @param ratings Dictionary mapping player names to ELO ratings.
 #  @param avg_times Dictionary mapping player names to average time per move.
 #  @param save_path Path to save the generated image.
-def plot_elo_time(ratings: dict[str, float], avg_times: dict[str, float], save_path: str) -> None:
+def plot_elo_time(
+    ratings: dict[str, float], avg_times: dict[str, float], save_path: str, use_log_scale: bool = False
+) -> None:
     # Use a clean, modern style
     plt.style.use("seaborn-v0_8-whitegrid" if "seaborn-v0_8-whitegrid" in plt.style.available else "default")
     fig, ax = plt.subplots(figsize=(11, 7), dpi=300)
 
-    # Convert to arrays
+    # Convert to arrays and convert seconds to milliseconds
     names = list(ratings.keys())
-    x = [avg_times.get(name, 0.0) for name in names]
+    xMs = [avg_times.get(name, 0.0) * 1000.0 for name in names]
     y = [ratings[name] for name in names]
 
-    # Handle zero times to avoid log scale errors
-    min_nonzero = min([val for val in x if val > 0] or [1e-6])
-    x_adjusted = [val if val > 0 else min_nonzero * 0.1 for val in x]
+    # Handle zero times to avoid log scale errors if log scale is used
+    if use_log_scale:
+        min_nonzero = min([val for val in xMs if val > 0] or [1e-3])
+        xMs = [val if val > 0 else min_nonzero * 0.1 for val in xMs]
 
     # Color map
     colors = plt.cm.viridis(np.linspace(0.1, 0.9, len(names)))
 
-    ax.scatter(x_adjusted, y, c=colors, s=100, alpha=0.85, edgecolors="black", linewidths=1.2)
+    ax.scatter(xMs, y, c=colors, s=100, alpha=0.85, edgecolors="black", linewidths=1.2)
 
-    # Annotate player names
+    # Annotate player names with 4-way alternating offsets to prevent overlaps
     for i, name in enumerate(names):
+        cycle = i % 4
+        if cycle == 0:
+            xytext = (0, 12)
+            ha, va = "center", "bottom"
+        elif cycle == 1:
+            xytext = (0, -20)
+            ha, va = "center", "top"
+        elif cycle == 2:
+            xytext = (15, 0)
+            ha, va = "left", "center"
+        else:
+            xytext = (-15, 0)
+            ha, va = "right", "center"
+
         ax.annotate(
             name,
-            (x_adjusted[i], y[i]),
+            (xMs[i], y[i]),
             textcoords="offset points",
-            xytext=(0, 12),
-            ha="center",
-            va="bottom",
-            fontsize=9,
+            xytext=xytext,
+            ha=ha,
+            va=va,
+            fontsize=8,
             fontweight="bold",
             bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.75, ec="grey", lw=0.5),
         )
@@ -149,12 +166,11 @@ def plot_elo_time(ratings: dict[str, float], avg_times: dict[str, float], save_p
     ax.set_title("Fight Club Performance Trade-off: Elo vs. Decision Time", fontsize=14, fontweight="bold", pad=20)
     ax.set_ylabel("Elo Rating", fontsize=12, fontweight="bold")
 
-    # Set x-scale to log if there is a massive range
-    if max(x_adjusted) / min(x_adjusted) > 10.0:
+    if use_log_scale:
         ax.set_xscale("log")
-        ax.set_xlabel("Average Time per Move (seconds, Log Scale)", fontsize=12, fontweight="bold")
+        ax.set_xlabel("Average Time per Move (ms, Log Scale)", fontsize=12, fontweight="bold")
     else:
-        ax.set_xlabel("Average Time per Move (seconds)", fontsize=12, fontweight="bold")
+        ax.set_xlabel("Average Time per Move (ms)", fontsize=12, fontweight="bold")
 
     # Layout adjustment and saving
     plt.tight_layout()
@@ -201,10 +217,12 @@ def main() -> None:
         "mcts_600",
         "mcts_800",
         "minimax_2",
+        "minimax_3",
         "minimax_4",
         "minimax_6",
         "minimax_8",
         "minimax_2_mad2",
+        "minimax_3_mad2",
         "minimax_4_mad2",
         "minimax_6_mad2",
         "minimax_8_mad2",
@@ -290,12 +308,14 @@ def main() -> None:
     try:
         elo_ratings = calculate_elo(config.CSV_PATH, player_names)
         avg_times = calculate_time_stats(config.CSV_PATH, player_names)
-        plot_elo_time(elo_ratings, avg_times, config.PLOT_PATH)
+        plot_elo_time(elo_ratings, avg_times, config.PLOT_PATH_LINEAR, use_log_scale=False)
+        plot_elo_time(elo_ratings, avg_times, config.PLOT_PATH_LOG, use_log_scale=True)
         write_summary_file(elo_ratings, avg_times, config.SUMMARY_PATH)
 
         if not remaining_schedule:
             console.print("[bold green]All tournament games have already been completed![/bold green]")
-            console.print(f"Elo vs time plot updated at: [bold yellow]{config.PLOT_PATH}[/bold yellow]")
+            console.print(f"Elo vs time linear plot updated at: [bold yellow]{config.PLOT_PATH_LINEAR}[/bold yellow]")
+            console.print(f"Elo vs time log plot updated at: [bold yellow]{config.PLOT_PATH_LOG}[/bold yellow]")
             console.print(f"Standings summary updated at: [bold yellow]{config.SUMMARY_PATH}[/bold yellow]")
             return
 
@@ -357,7 +377,8 @@ def main() -> None:
                             # Periodically update plot
                             completed_games_count += 1
                             if completed_games_count % 10 == 0 or completed_games_count == total_games:
-                                plot_elo_time(elo_ratings, avg_times, config.PLOT_PATH)
+                                plot_elo_time(elo_ratings, avg_times, config.PLOT_PATH_LINEAR, use_log_scale=False)
+                                plot_elo_time(elo_ratings, avg_times, config.PLOT_PATH_LOG, use_log_scale=True)
                                 write_summary_file(elo_ratings, avg_times, config.SUMMARY_PATH)
 
                             # Update progress bar
@@ -409,11 +430,13 @@ def main() -> None:
                     raise
 
         # Final plot update
-        plot_elo_time(elo_ratings, avg_times, config.PLOT_PATH)
+        plot_elo_time(elo_ratings, avg_times, config.PLOT_PATH_LINEAR, use_log_scale=False)
+        plot_elo_time(elo_ratings, avg_times, config.PLOT_PATH_LOG, use_log_scale=True)
         write_summary_file(elo_ratings, avg_times, config.SUMMARY_PATH)
         console.print("\n[bold green]Tournament completed successfully![/bold green]")
         console.print(f"Results saved to [bold yellow]{config.CSV_PATH}[/bold yellow].")
-        console.print(f"Performance chart saved to [bold yellow]{config.PLOT_PATH}[/bold yellow].")
+        console.print(f"Linear performance chart saved to [bold yellow]{config.PLOT_PATH_LINEAR}[/bold yellow].")
+        console.print(f"Log performance chart saved to [bold yellow]{config.PLOT_PATH_LOG}[/bold yellow].")
         console.print(f"Standings summary saved to [bold yellow]{config.SUMMARY_PATH}[/bold yellow].")
 
     except KeyboardInterrupt:

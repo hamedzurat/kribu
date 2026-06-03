@@ -16,6 +16,13 @@ from arena.player import NeuralPlayer
 def play_game_worker(task_args) -> tuple[int, str, str, str, str, int, float, float, int, int]:
     idx, p1, p2, p1_model_path, p2_model_path, max_turns = task_args
 
+    # Limit PyTorch to 1 thread per worker process to avoid context switching
+    # overhead/CPU thrashing on multi-core servers.
+    if p1_model_path or p2_model_path:
+        import torch
+
+        torch.set_num_threads(1)
+
     # Register standard players
     builtins = {
         "random": lambda state: (
@@ -27,10 +34,12 @@ def play_game_worker(task_args) -> tuple[int, str, str, str, str, int, float, fl
         "mcts_600": kribu.mcts_player_600,
         "mcts_800": kribu.mcts_player_800,
         "minimax_2": kribu.minimax_player_2,
+        "minimax_3": kribu.minimax_player_3,
         "minimax_4": kribu.minimax_player_4,
         "minimax_6": kribu.minimax_player_6,
         "minimax_8": kribu.minimax_player_8,
         "minimax_2_mad2": kribu.minimax_player_2_mad2,
+        "minimax_3_mad2": kribu.minimax_player_3_mad2,
         "minimax_4_mad2": kribu.minimax_player_4_mad2,
         "minimax_6_mad2": kribu.minimax_player_6_mad2,
         "minimax_8_mad2": kribu.minimax_player_8_mad2,
