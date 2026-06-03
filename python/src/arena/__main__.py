@@ -84,10 +84,11 @@ def make_dashboard(games_played, args, model_wins, opp_wins, draws, current_game
     # Stats Panel (Left)
     stats_table = Table(title="Completed Games History", expand=True)
     stats_table.add_column("Game ID", justify="center")
-    stats_table.add_column("Model Started", justify="center")
     stats_table.add_column("Winner", justify="center")
     stats_table.add_column("Reason", justify="center")
     stats_table.add_column("Turns", justify="right")
+    stats_table.add_column("Win By", justify="center")
+    stats_table.add_column("Time (M/O)", justify="center")
 
     # Determine dynamic history size based on terminal height
     terminal_height = shutil.get_terminal_size().lines
@@ -95,12 +96,18 @@ def make_dashboard(games_played, args, model_wins, opp_wins, draws, current_game
 
     for idx, gh in enumerate(history_log[-history_size:]):  # Display dynamically sized history
         winner_style = "green" if gh["winner"] == "model" else ("red" if gh["winner"] == "opponent" else "white")
+        game_id_str = f"{gh['game_id']}*" if gh["model_started"] == "Yes" else str(gh["game_id"])
+        win_by_pieces = abs(gh.get("model_pieces", 0) - gh.get("opp_pieces", 0))
+        win_by_str = f"{win_by_pieces} pcs" if gh["winner"] in ("model", "opponent") else "-"
+        time_str = f"{gh.get('model_time', 0.0):.1f}s / {gh.get('opp_time', 0.0):.1f}s"
+
         stats_table.add_row(
-            str(gh["game_id"]),
-            gh["model_started"],
+            game_id_str,
             f"[{winner_style}]{gh['winner'].upper()}[/{winner_style}]",
             gh["reason"],
             str(gh["turns"]),
+            win_by_str,
+            time_str,
         )
     layout["main"]["stats_panel"].update(Panel(stats_table, border_style="yellow"))
 
@@ -213,6 +220,10 @@ def main():
                 model_pieces = 16
                 opp_pieces = 16
 
+                # Track time
+                model_time = 0.0
+                opp_time = 0.0
+
                 # Track moves played in the current game
                 moves_played = []
 
@@ -270,6 +281,7 @@ def main():
                         continue
 
                     # Player makes move selection
+                    start_t = time.perf_counter()
                     if is_model_turn:
                         # Model chooses move using NN policy with policy masking
                         move_idx, _ = player.get_move(
@@ -279,6 +291,7 @@ def main():
                             valid_moves=valid_moves,
                             state=state,
                         )
+                        model_time += time.perf_counter() - start_t
                     else:
                         # Opponent selection
                         if args.opponent == "minimax":
@@ -296,6 +309,7 @@ def main():
 
                         if move_idx not in valid_moves:
                             move_idx = valid_moves[0]
+                        opp_time += time.perf_counter() - start_t
 
                     # Format move description
                     if move_idx == kribu.END_CHAIN_MOVE:
@@ -339,6 +353,10 @@ def main():
                     "winner": winner,
                     "reason": reason,
                     "turns": turn_idx,
+                    "model_pieces": model_pieces,
+                    "opp_pieces": opp_pieces,
+                    "model_time": model_time,
+                    "opp_time": opp_time,
                 }
                 history_log.append(game_result)
 
