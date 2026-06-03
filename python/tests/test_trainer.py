@@ -10,9 +10,10 @@ from trainer.train import (
     dataset_passes,
     is_improved,
     low_step_warning,
-    policy_replay_warning,
     loss_total,
     metric_points,
+    policy_replay_warning,
+    policy_snapshot_improved,
     render_line_chart,
     render_training_dashboard,
     resolve_steps_per_epoch,
@@ -74,6 +75,9 @@ def test_loss_and_improvement_helpers():
     assert loss_total(policy_loss=2.0, value_loss=float("nan"), value_loss_weight=0.0) == 2.0
     assert is_improved(metric=0.9, best_metric=1.0, min_improvement=0.01)
     assert not is_improved(metric=0.995, best_metric=1.0, min_improvement=0.01)
+    assert policy_snapshot_improved(0.53, 1.60, 0.52, 1.55, 1e-4)
+    assert policy_snapshot_improved(0.52, 1.50, 0.52, 1.55, 1e-4)
+    assert not policy_snapshot_improved(0.52, 1.56, 0.52, 1.55, 1e-4)
     assert low_step_warning(steps_per_epoch=3, batch_size=8192) is not None
     assert low_step_warning(steps_per_epoch=32, batch_size=4096) is None
     assert policy_replay_warning(policy_passes=18.2, value_passes=1.0) is not None

@@ -95,6 +95,27 @@ def is_improved(metric: float, best_metric: float, min_improvement: float) -> bo
     return metric < best_metric - min_improvement
 
 
+def policy_snapshot_improved(
+    policy_accuracy: float,
+    policy_loss: float,
+    best_policy_accuracy: float,
+    best_policy_loss: float,
+    min_improvement: float,
+) -> bool:
+    """Return true when a policy-only checkpoint improves move imitation quality."""
+    if not is_finite_metric(policy_accuracy):
+        return False
+    if not is_finite_metric(best_policy_accuracy):
+        return True
+    if policy_accuracy > best_policy_accuracy + min_improvement:
+        return True
+    if abs(policy_accuracy - best_policy_accuracy) <= min_improvement:
+        if not is_finite_metric(best_policy_loss):
+            return True
+        return policy_loss < best_policy_loss - min_improvement
+    return False
+
+
 def is_finite_metric(value: float) -> bool:
     """Return true when a metric can be plotted."""
     return isinstance(value, int | float) and math.isfinite(float(value))
@@ -220,7 +241,7 @@ def load_checkpoint(model, optimizer, scheduler, scaler, device):
     """Load a resumable training checkpoint when configured and available."""
     path = checkpoint_path()
     if not config.resume or not os.path.exists(path):
-        return 1, float("inf"), 0, []
+        return 1, float("inf"), 0, [], float("nan"), float("nan")
 
     checkpoint = torch.load(path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model"])
@@ -234,10 +255,23 @@ def load_checkpoint(model, optimizer, scheduler, scaler, device):
         checkpoint.get("best_validation_loss", float("inf")),
         checkpoint.get("checks_without_improvement", 0),
         checkpoint.get("history", []),
+        checkpoint.get("best_policy_accuracy", float("nan")),
+        checkpoint.get("best_policy_loss", float("nan")),
     )
 
 
-def save_checkpoint(model, optimizer, scheduler, scaler, epoch: int, best_validation_loss: float, checks: int, history):
+def save_checkpoint(
+    model,
+    optimizer,
+    scheduler,
+    scaler,
+    epoch: int,
+    best_validation_loss: float,
+    checks: int,
+    history,
+    best_policy_accuracy: float,
+    best_policy_loss: float,
+):
     """Save a resumable training checkpoint."""
     torch.save(
         {
@@ -249,6 +283,8 @@ def save_checkpoint(model, optimizer, scheduler, scaler, epoch: int, best_valida
             "best_validation_loss": best_validation_loss,
             "checks_without_improvement": checks,
             "history": history,
+            "best_policy_accuracy": best_policy_accuracy,
+            "best_policy_loss": best_policy_loss,
         },
         checkpoint_path(),
     )
@@ -359,6 +395,7 @@ def train():
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
+        mode="max" if config.policy_only else "min",
         factor=config.lr_plateau_factor,
         patience=config.lr_plateau_patience,
         min_lr=config.min_learning_rate,
@@ -389,9 +426,14 @@ def train():
 
     os.makedirs(config.save_dir, exist_ok=True)
 
-    start_epoch, best_validation_loss, checks_without_improvement, history_data = load_checkpoint(
-        model, optimizer, scheduler, scaler, device
-    )
+    (
+        start_epoch,
+        best_validation_loss,
+        checks_without_improvement,
+        history_data,
+        best_policy_accuracy,
+        best_policy_loss,
+    ) = load_checkpoint(model, optimizer, scheduler, scaler, device)
 
     tensorboard_dir = os.path.join(config.save_dir, "tensorboard", "current")
     writer = SummaryWriter(log_dir=tensorboard_dir, purge_step=max(0, start_epoch - 1))
@@ -440,7 +482,7 @@ def train():
 
     def generate_header(cur_ep, cur_pol, cur_val, cur_validation_loss, best):
         terminal_width = shutil.get_terminal_size().columns
-        b_str = f"{best:.4f}" if best != float("inf") else "---"
+        b_str = f"{best:.4f}" if is_finite_metric(best) else "---"
         p_str = f"{cur_pol:.4f}" if cur_pol else "---"
         v_str = f"{cur_val:.4f}" if is_finite_metric(cur_val) else "---"
         val_str = f"{cur_validation_loss:.4f}" if cur_validation_loss == cur_validation_loss else "---"
@@ -448,11 +490,12 @@ def train():
         warning_label = ""
         if replay_warning is not None:
             warning_label = "  |  Warning: replay imbalance"
+        best_label = "Best Acc" if config.policy_only else "Best Val"
         text = (
             f"Device: {device_name}  |  Epoch: {cur_ep}/{config.epochs}  |  Steps: {steps_per_epoch}  |  "
             f"Rows: P {policy_train_rows} / V {value_train_rows if value_loader is not None else 0}  |  "
             f"Passes: P {policy_passes:.2f}x / V {value_pass_label}  |  LR: {current_learning_rate(optimizer):.1e}  |  "
-            f"Batch: {config.batch_size}  |  Best Val: {b_str}  |  Train: P {p_str} / V {v_str}  |  Val: {val_str}"
+            f"Batch: {config.batch_size}  |  {best_label}: {b_str}  |  Train: P {p_str} / V {v_str}  |  Val: {val_str}"
             f"{warning_label}"
         )
         return Text(compact_label(text, terminal_width), style="bold cyan", justify="center")
@@ -461,7 +504,15 @@ def train():
         terminal_size = shutil.get_terminal_size()
         return render_training_dashboard(hist, terminal_size.columns, max(6, terminal_size.lines - 2))
 
-    layout["header"].update(generate_header(start_epoch - 1, 0.0, 0.0, float("nan"), best_validation_loss))
+    layout["header"].update(
+        generate_header(
+            start_epoch - 1,
+            0.0,
+            0.0,
+            float("nan"),
+            best_policy_accuracy if config.policy_only else best_validation_loss,
+        )
+    )
     layout["body"].update(generate_body(history_data))
 
     try:
@@ -515,14 +566,29 @@ def train():
                         device,
                     )
                     validation_total = loss_total(val_pol, val_value, effective_value_loss_weight)
-                    scheduler.step(validation_total)
-
-                    if is_improved(validation_total, best_validation_loss, config.min_improvement):
-                        best_validation_loss = validation_total
-                        checks_without_improvement = 0
-                        torch.save(model.state_dict(), os.path.join(config.save_dir, "best_model.pt"))
+                    if config.policy_only:
+                        scheduler.step(policy_accuracy)
+                        if policy_snapshot_improved(
+                            policy_accuracy,
+                            val_pol,
+                            best_policy_accuracy,
+                            best_policy_loss,
+                            config.min_improvement,
+                        ):
+                            best_policy_accuracy = policy_accuracy
+                            best_policy_loss = val_pol
+                            checks_without_improvement = 0
+                            torch.save(model.state_dict(), os.path.join(config.save_dir, "best_model.pt"))
+                        else:
+                            checks_without_improvement += 1
                     else:
-                        checks_without_improvement += 1
+                        scheduler.step(validation_total)
+                        if is_improved(validation_total, best_validation_loss, config.min_improvement):
+                            best_validation_loss = validation_total
+                            checks_without_improvement = 0
+                            torch.save(model.state_dict(), os.path.join(config.save_dir, "best_model.pt"))
+                        else:
+                            checks_without_improvement += 1
                 else:
                     scheduler.step(avg_tot)
 
@@ -544,6 +610,8 @@ def train():
 
                 if is_finite_metric(policy_accuracy):
                     writer.add_scalar("metrics/policy_accuracy", policy_accuracy, epoch)
+                if is_finite_metric(best_policy_accuracy):
+                    writer.add_scalar("training/best_policy_accuracy", best_policy_accuracy, epoch)
 
                 if is_finite_metric(value_mae):
                     writer.add_scalar("metrics/value_mae", value_mae, epoch)
@@ -567,11 +635,19 @@ def train():
                     best_validation_loss,
                     checks_without_improvement,
                     history_data,
+                    best_policy_accuracy,
+                    best_policy_loss,
                 )
                 writer.flush()
 
                 layout["header"].update(
-                    generate_header(epoch, avg_pol, avg_val, validation_total, best_validation_loss)
+                    generate_header(
+                        epoch,
+                        avg_pol,
+                        avg_val,
+                        validation_total,
+                        best_policy_accuracy if config.policy_only else best_validation_loss,
+                    )
                 )
                 layout["body"].update(generate_body(history_data))
                 progress_epoch.advance(epoch_task)
