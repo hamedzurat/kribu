@@ -578,7 +578,13 @@ def train():
                             best_policy_accuracy = policy_accuracy
                             best_policy_loss = val_pol
                             checks_without_improvement = 0
-                            torch.save(model.state_dict(), os.path.join(config.save_dir, "best_model.pt"))
+                            torch.save(
+                                {
+                                    "model": model.state_dict(),
+                                    "use_value_guidance": False,
+                                },
+                                os.path.join(config.save_dir, "best_model.pt"),
+                            )
                         else:
                             checks_without_improvement += 1
                     else:
@@ -586,7 +592,13 @@ def train():
                         if is_improved(validation_total, best_validation_loss, config.min_improvement):
                             best_validation_loss = validation_total
                             checks_without_improvement = 0
-                            torch.save(model.state_dict(), os.path.join(config.save_dir, "best_model.pt"))
+                            torch.save(
+                                {
+                                    "model": model.state_dict(),
+                                    "use_value_guidance": True,
+                                },
+                                os.path.join(config.save_dir, "best_model.pt"),
+                            )
                         else:
                             checks_without_improvement += 1
                 else:
@@ -596,7 +608,13 @@ def train():
                     avg_tot, best_validation_loss, config.min_improvement
                 ):
                     best_validation_loss = avg_tot
-                    torch.save(model.state_dict(), os.path.join(config.save_dir, "best_model.pt"))
+                    torch.save(
+                        {
+                            "model": model.state_dict(),
+                            "use_value_guidance": not config.policy_only,
+                        },
+                        os.path.join(config.save_dir, "best_model.pt"),
+                    )
 
                 history_data.append((epoch, avg_tot, validation_total, policy_accuracy, value_mae))
 

@@ -286,84 +286,98 @@ def main() -> None:
 
             # Start process pool executor
             with ProcessPoolExecutor(max_workers=config.NUM_WORKERS) as executor:
-                # Submit all remaining games
-                futures = {}
-                for idx, (p1, p2) in enumerate(remaining_schedule, start=played_games + 1):
-                    task_args = (idx, p1, p2, model_paths.get(p1), model_paths.get(p2), config.MAX_TURNS)
-                    fut = executor.submit(play_game_worker, task_args)
-                    futures[fut] = (p1, p2)
+                try:
+                    # Submit all remaining games
+                    futures = {}
+                    for idx, (p1, p2) in enumerate(remaining_schedule, start=played_games + 1):
+                        task_args = (idx, p1, p2, model_paths.get(p1), model_paths.get(p2), config.MAX_TURNS)
+                        fut = executor.submit(play_game_worker, task_args)
+                        futures[fut] = (p1, p2)
 
-                completed_games_count = played_games
+                    completed_games_count = played_games
 
-                # As each game finishes
-                for fut in as_completed(futures):
-                    p1, p2 = futures[fut]
-                    try:
-                        res_idx, res_p1, res_p2, winner_id, reason, turns, p1_time, p2_time, p1_moves, p2_moves = (
-                            fut.result()
-                        )
-
-                        # Append result to CSV
-                        with open(config.CSV_PATH, mode="a", newline="", encoding="utf-8") as f:
-                            writer = csv.writer(f)
-                            writer.writerow(
-                                [
-                                    res_idx,
-                                    res_p1,
-                                    res_p2,
-                                    winner_id,
-                                    reason,
-                                    turns,
-                                    p1_time,
-                                    p2_time,
-                                    p1_moves,
-                                    p2_moves,
-                                ]
+                    # As each game finishes
+                    for fut in as_completed(futures):
+                        p1, p2 = futures[fut]
+                        try:
+                            res_idx, res_p1, res_p2, winner_id, reason, turns, p1_time, p2_time, p1_moves, p2_moves = (
+                                fut.result()
                             )
 
-                        # Recalculate Elo and speeds
-                        elo_ratings = calculate_elo(config.CSV_PATH, player_names)
-                        avg_times = calculate_time_stats(config.CSV_PATH, player_names)
+                            # Append result to CSV
+                            with open(config.CSV_PATH, mode="a", newline="", encoding="utf-8") as f:
+                                writer = csv.writer(f)
+                                writer.writerow(
+                                    [
+                                        res_idx,
+                                        res_p1,
+                                        res_p2,
+                                        winner_id,
+                                        reason,
+                                        turns,
+                                        p1_time,
+                                        p2_time,
+                                        p1_moves,
+                                        p2_moves,
+                                    ]
+                                )
 
-                        # Periodically update plot
-                        completed_games_count += 1
-                        if completed_games_count % 10 == 0 or completed_games_count == total_games:
-                            plot_elo_time(elo_ratings, avg_times, config.PLOT_PATH)
+                            # Recalculate Elo and speeds
+                            elo_ratings = calculate_elo(config.CSV_PATH, player_names)
+                            avg_times = calculate_time_stats(config.CSV_PATH, player_names)
 
-                        # Update progress bar
-                        progress_bar.update(task_id, completed=completed_games_count)
+                            # Periodically update plot
+                            completed_games_count += 1
+                            if completed_games_count % 10 == 0 or completed_games_count == total_games:
+                                plot_elo_time(elo_ratings, avg_times, config.PLOT_PATH)
 
-                        # Rebuild live standings table
-                        dashboard_table = Table(title="Live ELO Standings", expand=True)
-                        dashboard_table.add_column("Rank", justify="center", style="cyan")
-                        dashboard_table.add_column("Player", style="bold white")
-                        dashboard_table.add_column("Elo Rating", justify="right", style="green")
-                        dashboard_table.add_column("Avg Time/Move (s)", justify="right", style="yellow")
+                            # Update progress bar
+                            progress_bar.update(task_id, completed=completed_games_count)
 
-                        # Sort by Elo
-                        sorted_players = sorted(player_names, key=lambda name: elo_ratings[name], reverse=True)
-                        for rank, name in enumerate(sorted_players, 1):
-                            dashboard_table.add_row(
-                                str(rank),
-                                name,
-                                f"{elo_ratings[name]:.1f}",
-                                f"{avg_times.get(name, 0.0):.5f}",
+                            # Rebuild live standings table
+                            dashboard_table = Table(title="Live ELO Standings", expand=True)
+                            dashboard_table.add_column("Rank", justify="center", style="cyan")
+                            dashboard_table.add_column("Player", style="bold white")
+                            dashboard_table.add_column("Elo Rating", justify="right", style="green")
+                            dashboard_table.add_column("Avg Time/Move (s)", justify="right", style="yellow")
+
+                            # Sort by Elo
+                            sorted_players = sorted(player_names, key=lambda name: elo_ratings[name], reverse=True)
+                            for rank, name in enumerate(sorted_players, 1):
+                                dashboard_table.add_row(
+                                    str(rank),
+                                    name,
+                                    f"{elo_ratings[name]:.1f}",
+                                    f"{avg_times.get(name, 0.0):.5f}",
+                                )
+
+                            layout_grid = Table.grid(padding=(1, 0))
+                            layout_grid.add_row(Panel(progress_bar, title="Tournament Progress", border_style="cyan"))
+                            layout_grid.add_row(
+                                Panel(dashboard_table, title="Current Standings", border_style="magenta")
                             )
 
-                        layout_grid = Table.grid(padding=(1, 0))
-                        layout_grid.add_row(Panel(progress_bar, title="Tournament Progress", border_style="cyan"))
-                        layout_grid.add_row(Panel(dashboard_table, title="Current Standings", border_style="magenta"))
+                            winner_name = (
+                                res_p1 if winner_id == "player1" else (res_p2 if winner_id == "player2" else "draw")
+                            )
+                            layout_grid.add_row(
+                                f"Last finished: [bold cyan]{res_p1}[/bold cyan] vs [bold yellow]{res_p2}[/bold yellow] -> Winner: [bold green]{winner_name}[/bold green] ({reason})"
+                            )
 
-                        winner_name = (
-                            res_p1 if winner_id == "player1" else (res_p2 if winner_id == "player2" else "draw")
-                        )
-                        layout_grid.add_row(
-                            f"Last finished: [bold cyan]{res_p1}[/bold cyan] vs [bold yellow]{res_p2}[/bold yellow] -> Winner: [bold green]{winner_name}[/bold green] ({reason})"
-                        )
-
-                        live.update(Panel(layout_grid, title="[bold yellow]FIGHT CLUB LIVE DASHBOARD[/bold yellow]"))
-                    except Exception as exc:
-                        console.print(f"[red]Match {p1} vs {p2} generated an exception: {exc}[/red]")
+                            live.update(
+                                Panel(layout_grid, title="[bold yellow]FIGHT CLUB LIVE DASHBOARD[/bold yellow]")
+                            )
+                        except Exception as exc:
+                            console.print(f"[red]Match {p1} vs {p2} generated an exception: {exc}[/red]")
+                except KeyboardInterrupt:
+                    # Clean up child processes immediately to prevent raw tracebacks
+                    for p in list(executor._processes.values()):
+                        try:
+                            p.terminate()
+                        except Exception:
+                            pass
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    raise
 
         # Final plot update
         plot_elo_time(elo_ratings, avg_times, config.PLOT_PATH)

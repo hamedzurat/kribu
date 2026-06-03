@@ -31,8 +31,10 @@ class NeuralPlayer:
 
         self.device = torch.device(device)
         checkpoint = torch.load(model_path, map_location=self.device, weights_only=True)
+        self.use_value_guidance = not config.policy_only
         if isinstance(checkpoint, dict) and "model" in checkpoint:
             stateDict = checkpoint["model"]
+            self.use_value_guidance = bool(checkpoint.get("use_value_guidance", True))
         else:
             stateDict = checkpoint
 
@@ -181,8 +183,12 @@ class NeuralPlayer:
                 raise ValueError("valid_moves must not be empty when provided")
             if len(valid_moves) == 1:
                 best_move_idx = int(valid_moves[0])
-            else:
+            elif self.use_value_guidance:
                 best_move_idx = self._select_move_with_value_guidance(state, valid_moves, current_policy_logits)
+            else:
+                move_indices = torch.tensor(valid_moves, dtype=torch.long, device=self.device)
+                valid_logits = current_policy_logits[move_indices]
+                best_move_idx = int(valid_moves[int(torch.argmax(valid_logits, dim=0).item())])
         else:
             best_move_idx = int(torch.argmax(current_policy_logits, dim=-1).item())
 

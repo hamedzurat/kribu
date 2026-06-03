@@ -68,7 +68,7 @@ def test_neural_player_selects_best_valid_move(tmp_path):
 def test_neural_player_uses_value_guidance_for_valid_moves(tmp_path):
     model = SholoGutiNet(input_features=83, hidden_dim=32, num_residual_blocks=1, action_space=265)
     modelPath = os.path.join(tmp_path, "value_guided_model.pt")
-    torch.save(model.state_dict(), modelPath)
+    torch.save({"model": model.state_dict(), "use_value_guidance": True}, modelPath)
 
     player = NeuralPlayer(model_path=modelPath, device="cpu")
 
@@ -109,6 +109,35 @@ def test_neural_player_uses_value_guidance_for_valid_moves(tmp_path):
     )
 
     assert move_id == value_preferred_move
+
+
+def test_neural_player_policy_only_skips_value_guidance(tmp_path):
+    model = SholoGutiNet(input_features=83, hidden_dim=32, num_residual_blocks=1, action_space=265)
+    modelPath = os.path.join(tmp_path, "policy_only_model.pt")
+    torch.save({"model": model.state_dict(), "use_value_guidance": False}, modelPath)
+
+    player = NeuralPlayer(model_path=modelPath, device="cpu")
+    valid_moves = [7, 11, 19]
+
+    class PolicyOnlyModel(torch.nn.Module):
+        def forward(self, x):
+            batch = x.shape[0]
+            policy = torch.full((batch, 265), -10.0)
+            policy[:, 7] = 0.5
+            policy[:, 11] = 3.0
+            policy[:, 19] = 1.0
+            return policy, torch.zeros(batch)
+
+    player.model = PolicyOnlyModel()
+    move_id, _ = player.get_move(
+        INITIAL_STATE.me,
+        INITIAL_STATE.opp,
+        INITIAL_STATE.activeCaptureIdx,
+        valid_moves=valid_moves,
+        state=INITIAL_STATE,
+    )
+
+    assert move_id == 11
 
 
 def test_neural_player_scales_repetition_features_like_trainer(tmp_path):
