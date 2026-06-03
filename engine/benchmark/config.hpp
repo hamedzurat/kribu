@@ -70,12 +70,12 @@ inline constexpr int THREAD_COUNT = 32;
  */
 inline constexpr std::array BENCHMARK_MATCHUPS = {
     // ── POLICY matchups ──────────────────────────────────────────────────────
-    // Target: substantially more Minimax8 teacher coverage so the supervised policy can
-    // move beyond the ~50% validation-accuracy plateau. The Minimax4 pairings add direct
-    // examples of how the stronger teacher punishes depth-4 search lines.
-    MatchConfig{.player1Name = "Minimax8",       .player2Name = "Minimax8",       .games = 256,   .maxTurns = 1024},
-    MatchConfig{.player1Name = "Minimax8",       .player2Name = "Minimax4",       .games = 512,   .maxTurns = 1024},
-    MatchConfig{.player1Name = "Minimax4",       .player2Name = "Minimax8",       .games = 512,   .maxTurns = 1024},
+    // Deterministic search-vs-search pairings are coverage seeds, not bulk generators.
+    // Keep one explicit game per starting-side configuration and spend the bulk of the
+    // benchmark budget on stochastic or weaker-opponent matchups that broaden coverage.
+    MatchConfig{.player1Name = "Minimax8",       .player2Name = "Minimax8",       .games = 1,     .maxTurns = 1024},
+    MatchConfig{.player1Name = "Minimax8",       .player2Name = "Minimax4",       .games = 1,     .maxTurns = 1024},
+    MatchConfig{.player1Name = "Minimax4",       .player2Name = "Minimax8",       .games = 1,     .maxTurns = 1024},
     MatchConfig{.player1Name = "Minimax8",       .player2Name = "Minimax8_Mad1",  .games = 4096,  .maxTurns = 1024},
     MatchConfig{.player1Name = "Minimax8_Mad1",  .player2Name = "Minimax8",       .games = 4096,  .maxTurns = 1024},
     MatchConfig{.player1Name = "Minimax8",       .player2Name = "Minimax8_Mad2",  .games = 4096,  .maxTurns = 1024},

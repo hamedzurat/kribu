@@ -205,3 +205,26 @@ TEST_CASE("Minimax player maker fallback on -1 moveId", "[minimax]") {
   REQUIRE(moveId != -1);
   REQUIRE(is_valid(state, moveId));
 }
+
+TEST_CASE("Minimax treats progress-limit states as terminal draws", "[minimax]") {
+  boardState state = INITIAL_STATE;
+  state.historyCount = MAX_HISTORY_LIMIT;
+
+  MinimaxResult res = minimax(state, 4, -INFINITY_VAL, INFINITY_VAL);
+
+  REQUIRE(res.moveId == -1);
+  REQUIRE(res.score > -INFINITY_VAL / 2);
+  REQUIRE(res.score < INFINITY_VAL / 2);
+}
+
+TEST_CASE("Minimax draw contempt prefers avoiding draws when materially ahead", "[minimax]") {
+  boardState state;
+  state.me = (1ULL << 16) | (1ULL << 18);
+  state.opp = 1ULL << 5;
+  state.historyCount = MAX_HISTORY_LIMIT;
+
+  MinimaxResult res = minimax(state, 2, -INFINITY_VAL, INFINITY_VAL);
+
+  REQUIRE(res.moveId == -1);
+  REQUIRE(res.score < 0);
+}

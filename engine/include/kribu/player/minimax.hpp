@@ -25,6 +25,8 @@ using namespace kribu::sholoGuti;
  * @brief Infinity value used as bounds in alpha-beta pruning.
  */
 constexpr i32 INFINITY_VAL = 1000000000;
+constexpr i32 DRAW_CONTEMPT_CAP = 250;
+constexpr i32 DRAW_CONTEMPT_DIVISOR = 32;
 
 /**
  * @brief Default null-move reduction depth.
@@ -82,6 +84,18 @@ struct MinimaxResult {
    */
   int moveId = -1;
 };
+
+/**
+ * @brief Return a finite draw score with mild contempt based on static evaluation.
+ * @details Draws should not be treated as perfectly neutral when the current side
+ *          is clearly better or worse. A small contempt term helps the stronger
+ *          side keep pressing while still allowing the weaker side to seek draws.
+ */
+[[nodiscard]] inline i32 draw_score(const boardState& state) noexcept {
+  const i32 staticEval = heuristics::evaluate(state, 1);
+  const i32 contempt = std::clamp(staticEval / DRAW_CONTEMPT_DIVISOR, -DRAW_CONTEMPT_CAP, DRAW_CONTEMPT_CAP);
+  return -contempt;
+}
 
 /**
  * @struct OrderedMoveList
@@ -490,6 +504,10 @@ constexpr void push_remaining_quiet_moves(
                                                      i32 alpha,
                                                      i32 beta,
                                                      SearchContext& ctx) noexcept {
+  if (state.historyCount >= MAX_HISTORY_LIMIT) {
+    return MinimaxResult{.score = draw_score(state), .moveId = -1};
+  }
+
   // Terminal: current player has captured all opponent pieces.
   if (piece_count(state.opp) == 0) {
     return MinimaxResult{.score = INFINITY_VAL, .moveId = -1};
@@ -530,6 +548,11 @@ constexpr void push_remaining_quiet_moves(
  * @return True if the position is terminal and result was set, false otherwise.
  */
 [[nodiscard]] inline bool check_terminal(const boardState& state, int depth, MinimaxResult& result) noexcept {
+  if (state.historyCount >= MAX_HISTORY_LIMIT) {
+    result = MinimaxResult{.score = draw_score(state), .moveId = -1};
+    return true;
+  }
+
   if (piece_count(state.opp) == 0) {
     result = MinimaxResult{.score = INFINITY_VAL + depth, .moveId = -1};
     return true;
@@ -784,7 +807,7 @@ inline void store_tt_result(
   if (!isRoot) {
     for (int i = 0; i < ctx.pathSize; ++i) {
       if (ctx.searchPath[i] == state.hash) {
-        return MinimaxResult{.score = 0, .moveId = -1};
+        return MinimaxResult{.score = draw_score(state), .moveId = -1};
       }
     }
   }

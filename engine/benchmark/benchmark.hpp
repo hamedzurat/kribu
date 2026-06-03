@@ -399,8 +399,7 @@ constexpr GameOutcome handle_game_over(GameStatus status, bool isP1Turn) noexcep
  * @brief Helper to handle invalid move scenario.
  */
 constexpr GameOutcome handle_invalid_move(bool isP1Turn) noexcept {
-  (void) isP1Turn;
-  return GameOutcome{.result = GameResult::DRAW, .reason = WinReason::INVALID_MOVE};
+  return GameOutcome{.result = isP1Turn ? GameResult::P2_WINS : GameResult::P1_WINS, .reason = WinReason::INVALID_MOVE};
 }
 
 /**
