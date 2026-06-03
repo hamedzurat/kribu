@@ -70,19 +70,23 @@ inline constexpr int THREAD_COUNT = 32;
  */
 inline constexpr std::array BENCHMARK_MATCHUPS = {
     // ── POLICY matchups ──────────────────────────────────────────────────────
-    // Keep only matchups that directly produce Minimax8 teacher turns.
-    MatchConfig{.player1Name = "Minimax8",       .player2Name = "Minimax8",       .games =  256,  .maxTurns = 1024},
-    MatchConfig{.player1Name = "Minimax8",       .player2Name = "Minimax8_Mad1",  .games = 2048,  .maxTurns = 1024},
-    MatchConfig{.player1Name = "Minimax8_Mad1",  .player2Name = "Minimax8",       .games = 2048,  .maxTurns = 1024},
-    MatchConfig{.player1Name = "Minimax8",       .player2Name = "Minimax8_Mad2",  .games = 2048,  .maxTurns = 1024},
-    MatchConfig{.player1Name = "Minimax8_Mad2",  .player2Name = "Minimax8",       .games = 2048,  .maxTurns = 1024},
+    // Target: substantially more Minimax8 teacher coverage so the supervised policy can
+    // move beyond the ~50% validation-accuracy plateau. The Minimax4 pairings add direct
+    // examples of how the stronger teacher punishes depth-4 search lines.
+    MatchConfig{.player1Name = "Minimax8",       .player2Name = "Minimax8",       .games = 256,   .maxTurns = 1024},
+    MatchConfig{.player1Name = "Minimax8",       .player2Name = "Minimax4",       .games = 512,   .maxTurns = 1024},
+    MatchConfig{.player1Name = "Minimax4",       .player2Name = "Minimax8",       .games = 512,   .maxTurns = 1024},
+    MatchConfig{.player1Name = "Minimax8",       .player2Name = "Minimax8_Mad1",  .games = 4096,  .maxTurns = 1024},
+    MatchConfig{.player1Name = "Minimax8_Mad1",  .player2Name = "Minimax8",       .games = 4096,  .maxTurns = 1024},
+    MatchConfig{.player1Name = "Minimax8",       .player2Name = "Minimax8_Mad2",  .games = 4096,  .maxTurns = 1024},
+    MatchConfig{.player1Name = "Minimax8_Mad2",  .player2Name = "Minimax8",       .games = 4096,  .maxTurns = 1024},
 
     // ── VALUE matchups ───────────────────────────────────────────────────────
-    //    Only keep matchups that can label Minimax8 positions directly.
-    MatchConfig{.player1Name = "Minimax8",      .player2Name = "RandomPlayer",  .games = 1024,  .maxTurns = 1024},
-    MatchConfig{.player1Name = "RandomPlayer",  .player2Name = "Minimax8",      .games = 1024,  .maxTurns = 1024},
-    MatchConfig{.player1Name = "Minimax8",      .player2Name = "GreedyPlayer",  .games = 1024,  .maxTurns = 1024},
-    MatchConfig{.player1Name = "GreedyPlayer",  .player2Name = "Minimax8",      .games = 1024,  .maxTurns = 1024},
+    // Only keep matchups that can label Minimax8 positions directly.
+    MatchConfig{.player1Name = "Minimax8",      .player2Name = "RandomPlayer",  .games = 2048,  .maxTurns = 1024},
+    MatchConfig{.player1Name = "RandomPlayer",  .player2Name = "Minimax8",      .games = 2048,  .maxTurns = 1024},
+    MatchConfig{.player1Name = "Minimax8",      .player2Name = "GreedyPlayer",  .games = 2048,  .maxTurns = 1024},
+    MatchConfig{.player1Name = "GreedyPlayer",  .player2Name = "Minimax8",      .games = 2048,  .maxTurns = 1024},
     // clang-format on
 };
 

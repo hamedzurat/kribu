@@ -27,6 +27,7 @@ inline constexpr std::array BENCHMARK_PLAYERS = {
     Player{.type = "greedy", .name = "GreedyPlayer_Mad2",  .select = greedy_player_maker, .madness = 2},
 
     // ── Minimax ───────────────────────────────────────────────────────────────────────
+    Player{.type = "minimax", .name = "Minimax4",       .select = minimax_player_maker<4>, .depth = 4},
     Player{.type = "minimax", .name = "Minimax8",       .select = minimax_player_maker<8>, .depth = 8},
     Player{.type = "minimax", .name = "Minimax8_Mad1",  .select = minimax_player_maker<8>, .depth = 8, .madness = 1},
     Player{.type = "minimax", .name = "Minimax8_Mad2",  .select = minimax_player_maker<8>, .depth = 8, .madness = 2},
