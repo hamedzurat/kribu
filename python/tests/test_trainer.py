@@ -3,6 +3,7 @@ import torch
 from torch.utils.data import Dataset
 import duckdb
 
+import trainer.config as trainer_config_module
 from trainer.dataset import InMemoryDuckDBDataset, legal_move_mask, split_dataset, validation_stride
 from trainer.model import SholoGutiNet
 from trainer.train import (
@@ -82,6 +83,24 @@ def test_loss_and_improvement_helpers():
     assert low_step_warning(steps_per_epoch=32, batch_size=4096) is None
     assert policy_replay_warning(policy_passes=18.2, value_passes=1.0) is not None
     assert policy_replay_warning(policy_passes=1.0, value_passes=1.0) is None
+
+
+def test_build_config_from_env_supports_presets_and_path_override(monkeypatch):
+    monkeypatch.setenv("KRIBU_TRAIN_PRESET", "mm8_legacy_policy")
+    monkeypatch.setenv("KRIBU_DUCKDB_PATH", "benchmark/custom.duckdb")
+
+    trainer_config = trainer_config_module.build_config_from_env()
+
+    assert trainer_config.hidden_dim == 768
+    assert trainer_config.policy_only is True
+    assert trainer_config.duckdb_path == "benchmark/custom.duckdb"
+
+
+def test_build_config_from_env_rejects_unknown_preset(monkeypatch):
+    monkeypatch.setenv("KRIBU_TRAIN_PRESET", "does_not_exist")
+
+    with pytest.raises(ValueError):
+        trainer_config_module.build_config_from_env()
 
 
 def test_legal_move_mask_matches_engine_moves():

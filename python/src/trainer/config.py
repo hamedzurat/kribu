@@ -1,6 +1,7 @@
 """Configuration for the Sholo Guti PyTorch trainer."""
 
 import dataclasses
+import os
 
 
 @dataclasses.dataclass
@@ -112,4 +113,66 @@ class TrainerConfig:
     resume: bool = False
 
 
-config = TrainerConfig()
+PRESET_OVERRIDES: dict[str, dict[str, object]] = {
+    "mm8_current_policy": {
+        "duckdb_path": "benchmark/training_dataset.duckdb",
+        "batch_size": 2048,
+        "validation_fraction": 0.05,
+        "learning_rate": 5e-4,
+        "epochs": 80,
+        "policy_only": True,
+    },
+    "mm8_legacy_policy": {
+        "duckdb_path": "benchmark/training_mm8_legacy.duckdb",
+        "batch_size": 4096,
+        "validation_fraction": 0.02,
+        "hidden_dim": 768,
+        "num_residual_blocks": 10,
+        "learning_rate": 5e-4,
+        "epochs": 50,
+        "policy_only": True,
+    },
+    "search_blend_joint": {
+        "duckdb_path": "benchmark/training_search_blend.duckdb",
+        "batch_size": 4096,
+        "validation_fraction": 0.02,
+        "hidden_dim": 768,
+        "num_residual_blocks": 10,
+        "learning_rate": 3e-4,
+        "epochs": 60,
+        "value_loss_weight": 0.1,
+        "policy_only": False,
+        "value_mixed_state_weight": 0.2,
+        "value_draw_only_weight": 0.1,
+    },
+    "mcts_bootstrap_policy": {
+        "duckdb_path": "benchmark/training_mcts_bootstrap.duckdb",
+        "batch_size": 1024,
+        "validation_fraction": 0.1,
+        "learning_rate": 5e-4,
+        "epochs": 100,
+        "policy_only": True,
+    },
+}
+
+
+def build_config_from_env() -> TrainerConfig:
+    """Build trainer config, optionally applying a named preset and path override."""
+    trainer_config = TrainerConfig()
+
+    preset_name = os.getenv("KRIBU_TRAIN_PRESET", "").strip()
+    if preset_name:
+        overrides = PRESET_OVERRIDES.get(preset_name)
+        if overrides is None:
+            known_presets = ", ".join(sorted(PRESET_OVERRIDES))
+            raise ValueError(f"Unknown KRIBU_TRAIN_PRESET={preset_name!r}. Known presets: {known_presets}")
+        trainer_config = dataclasses.replace(trainer_config, **overrides)
+
+    duckdb_path_override = os.getenv("KRIBU_DUCKDB_PATH", "").strip()
+    if duckdb_path_override:
+        trainer_config = dataclasses.replace(trainer_config, duckdb_path=duckdb_path_override)
+
+    return trainer_config
+
+
+config = build_config_from_env()
