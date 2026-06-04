@@ -26,6 +26,13 @@ def count_bits(mask: int) -> int:
     return bin(mask).count("1")
 
 
+def piece_margin_summary(model_pieces: int, opp_pieces: int) -> str:
+    """Return a compact piece-difference summary for finished games."""
+    piece_delta = model_pieces - opp_pieces
+    delta_label = f"{piece_delta:+d}"
+    return f"{delta_label} pcs ({model_pieces}-{opp_pieces})"
+
+
 def get_winner_and_reason(status, is_model_turn):
     """
     Determines the winner relative to the model (model vs opponent vs draw)
@@ -97,8 +104,9 @@ def make_dashboard(games_played, args, model_wins, opp_wins, draws, current_game
     for idx, gh in enumerate(history_log[-history_size:]):  # Display dynamically sized history
         winner_style = "green" if gh["winner"] == "model" else ("red" if gh["winner"] == "opponent" else "white")
         game_id_str = f"{gh['game_id']}*" if gh["model_started"] == "Yes" else str(gh["game_id"])
-        win_by_pieces = abs(gh.get("model_pieces", 0) - gh.get("opp_pieces", 0))
-        win_by_str = f"{win_by_pieces} pcs" if gh["winner"] in ("model", "opponent") else "-"
+        model_pieces = int(gh.get("model_pieces", 0))
+        opp_pieces = int(gh.get("opp_pieces", 0))
+        win_by_str = piece_margin_summary(model_pieces, opp_pieces)
 
         m_time = gh.get("model_time", 0.0)
         o_time = gh.get("opp_time", 0.0)
