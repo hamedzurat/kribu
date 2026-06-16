@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KRIBU // SHOLO GUTI</title>
+    
+    <!-- Modern Typography from Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;700;900&family=JetBrains+Mono:wght@400;700;800&display=swap" rel="stylesheet">
+    
+    <link rel="stylesheet" href="/gui/gui.css">
+</head>
+<body>
+    <div class="neo-wrapper">
+        <!-- Stark Header -->
+        <header class="neo-header">
+            <div class="neo-logo">
+                <span class="logo-text">KRIBU</span>
+                <span class="logo-sub">SHOLO GUTI</span>
+            </div>
+            <div class="neo-status-badge" id="game-status-text">ONGOING</div>
+        </header>
+
+        <!-- Main Workspace -->
+        <main class="neo-grid">
+            <!-- Left Options Panel -->
+            <section class="neo-panel select-panel">
+                <h2 class="panel-title">1. SETUP</h2>
+                
+                <div class="neo-field" id="ai-type-group">
+                    <label for="ai-type">AI OPPONENT TYPE</label>
+                    <select id="ai-type" class="neo-select">
+                        <option value="minimax_player_8">Minimax (Depth 8)</option>
+                        <option value="minimax_player_6">Minimax (Depth 6)</option>
+                        <option value="minimax_player_4">Minimax (Depth 4)</option>
+                        <option value="minimax_player_3">Minimax (Depth 3)</option>
+                        <option value="minimax_player_2">Minimax (Depth 2)</option>
+                        <option value="minimax_player_8_mad2">Minimax MAD2 (Depth 8)</option>
+                        <option value="minimax_player_6_mad2">Minimax MAD2 (Depth 6)</option>
+                        <option value="minimax_player_4_mad2">Minimax MAD2 (Depth 4)</option>
+                        <option value="minimax_player_3_mad2">Minimax MAD2 (Depth 3)</option>
+                        <option value="minimax_player_2_mad2">Minimax MAD2 (Depth 2)</option>
+                        <option value="mcts_player_800">MCTS (800 Iterations)</option>
+                        <option value="mcts_player_600">MCTS (600 Iterations)</option>
+                        <option value="mcts_player_400">MCTS (400 Iterations)</option>
+                        <option value="mcts_player_200">MCTS (200 Iterations)</option>
+                        <option value="greedy_player">Greedy Player</option>
+                        <option value="random">Random Player</option>
+                        <option value="nn" selected>Neural Network (PyTorch)</option>
+                    </select>
+                </div>
+
+                <div class="neo-field" id="nn-model-group" style="display: none;">
+                    <label for="nn-model-select">NEURAL NETWORK MODEL</label>
+                    <select id="nn-model-select" class="neo-select">
+                        <!-- Populated dynamically -->
+                    </select>
+                </div>
+
+                <div class="neo-field" id="who-starts-group">
+                    <label>WHO STARTS THE GAME</label>
+                    <div class="neo-btn-group">
+                        <button id="btn-start-green" class="neo-btn btn-toggle active" data-starter="A">PLAYER A (GREEN)</button>
+                        <button id="btn-start-red" class="neo-btn btn-toggle" data-starter="B">PLAYER B (RED)</button>
+                    </div>
+                </div>
+
+                <div class="action-buttons">
+                    <button id="btn-new-game" class="neo-btn btn-primary">START NEW GAME</button>
+                    <button id="btn-undo" class="neo-btn btn-secondary" disabled>UNDO MOVE</button>
+                    <button id="btn-end-chain" class="neo-btn btn-warning" style="display: none;">END CAPTURE CHAIN</button>
+                </div>
+            </section>
+
+            <!-- Center Panel: The Game Board -->
+            <section class="neo-panel board-panel">
+                <div class="board-scores">
+                    <div class="score-card player-a">
+                        <span class="color-dot green"></span>
+                        <div class="score-info">
+                            <div class="score-label">PLAYER A</div>
+                            <div class="score-value" id="count-a">16 PIECES</div>
+                        </div>
+                    </div>
+                    <div class="score-card player-b">
+                        <div class="score-info text-right">
+                            <div class="score-label">PLAYER B</div>
+                            <div class="score-value" id="count-b">16 PIECES</div>
+                        </div>
+                        <span class="color-dot red"></span>
+                    </div>
+                </div>
+
+                <div class="neo-board-container">
+                    <div id="loading-overlay" class="neo-loading-overlay" style="display: none;">
+                        <div class="neo-loading-card">
+                            <span class="loading-spinner"></span>
+                            <span id="loading-message">THINKING...</span>
+                        </div>
+                    </div>
+                    <svg id="sholo-guti-svg" viewBox="-200 -360 400 720" preserveAspectRatio="xMidYMid meet">
+                        <!-- Definitions for styling elements -->
+                        <defs>
+                            <filter id="neo-shadow" x="-30%" y="-30%" width="160%" height="160%">
+                                <feDropShadow dx="4" dy="4" stdDeviation="0" flood-color="#000" flood-opacity="1"/>
+                            </filter>
+                        </defs>
+                        
+                        <!-- Board grid lines -->
+                        <g id="board-lines" class="board-lines-group"></g>
+                        
+                        <!-- Board active highlights for moves -->
+                        <g id="board-highlights"></g>
+                        
+                        <!-- Board nodes -->
+                        <g id="board-nodes"></g>
+                        
+                        <!-- Board pieces -->
+                        <g id="board-pieces"></g>
+                    </svg>
+                </div>
+            </section>
+
+            <!-- Right Panel: History and Statistics -->
+            <section class="neo-panel history-panel">
+                <h2 class="panel-title">2. GAME STATS</h2>
+                
+                <!-- Quick Stats -->
+                <div class="stat-card">
+                    <span class="stat-label">TOTAL MOVES</span>
+                    <span id="stat-total-moves" class="stat-value">0</span>
+                </div>
+
+                <div class="history-container">
+                    <div class="history-header">MOVE HISTORY</div>
+                    <div class="history-list" id="move-history-log">
+                        <div class="history-empty">No moves made yet.</div>
+                    </div>
+                    <button id="btn-return-current" class="neo-btn btn-small" style="display: none;">
+                        RETURN TO LIVE GAME
+                    </button>
+                </div>
+            </section>
+        </main>
+
+        <!-- Game Over Modal -->
+        <div id="game-over-modal" class="modal-overlay" style="display: none;">
+            <div class="modal-content neo-modal">
+                <div class="modal-icon" id="modal-result-icon"></div>
+                <h2 id="modal-result-title">PLAYER A WINS!</h2>
+                <p id="modal-result-message">Captured all opponent pieces.</p>
+                <div class="modal-actions">
+                    <button id="btn-modal-restart" class="neo-btn btn-primary">PLAY AGAIN</button>
+                    <button id="btn-modal-close" class="neo-btn btn-secondary">CLOSE</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script loading -->
+    <script src="/gui/gui.js"></script>
+</body>
+</html>

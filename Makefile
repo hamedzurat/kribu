@@ -1,4 +1,4 @@
-.PHONY: setup build hot-build test test-cpp test-python clean format lint run benchmark view-benchmark view consolidate-dataset generate extract-data tensorboard train arena todo
+.PHONY: setup build hot-build test test-cpp test-python clean format lint run gui benchmark view-benchmark view consolidate-dataset generate extract-data tensorboard train arena todo
 
 # Detect number of processors for parallel execution
 NPROC := $(shell nproc)
@@ -32,6 +32,9 @@ test-python:
 	PYTHONPATH=python/src uv run pytest python/tests/
 
 run:
+	PYTHONPATH=python/src uv run python python/src/kribu/main.py
+
+gui:
 	PYTHONPATH=python/src uv run python python/src/kribu/main.py
 
 benchmark: build

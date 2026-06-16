@@ -182,15 +182,8 @@ def test_multi_capture():
     # Apply second capture
     finalState = apply_move(nextState, capture2)
     assert piece_count(finalState.opp) == 0
-    # The chain remains active at the destination node until ended explicitly
-    assert finalState.activeCaptureIdx == 20
-
-    finalMoves = all_possible_moves(finalState)
-    assert END_CHAIN_MOVE in finalMoves
-    assert len(finalMoves) == 1  # Only END_CHAIN_MOVE is available
-
-    endedState = apply_move(finalState, END_CHAIN_MOVE)
-    assert endedState.activeCaptureIdx == -1
+    # The chain should auto-end because no further captures are possible
+    assert finalState.activeCaptureIdx == -1
 
 
 def test_auto_end_chain():
@@ -215,15 +208,8 @@ def test_auto_end_chain():
     # Apply capture
     nextState = apply_move(state, capture1)
     assert piece_count(nextState.opp) == 0
-    # The chain remains active at the destination node until ended explicitly
-    assert nextState.activeCaptureIdx == 18
-
-    nextMoves = all_possible_moves(nextState)
-    assert END_CHAIN_MOVE in nextMoves
-    assert len(nextMoves) == 1  # Only END_CHAIN_MOVE is available
-
-    endedState = apply_move(nextState, END_CHAIN_MOVE)
-    assert endedState.activeCaptureIdx == -1
+    # The chain should auto-end because no further captures are possible
+    assert nextState.activeCaptureIdx == -1
 
 
 def test_edge_deduplication():

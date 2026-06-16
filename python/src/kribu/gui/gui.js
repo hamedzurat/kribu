@@ -1,5 +1,7 @@
 // Kribu Sholo Guti - Premium Web Frontend JavaScript Logic
 
+// REST API client configuration
+
 // Define node coordinates mapped symmetrically
 const nodeCoordinates = {
     // Top pyramid (Row -2 and -1)
@@ -98,7 +100,8 @@ class GameState {
         this.activeCaptureIdx = -1;    // Locked piece index for multi-captures (-1 if none)
         this.currentPlayer = 'A';      // Current turn: 'A' or 'B'
         this.gameMode = 'pve';         // Mode: 'pve', 'pve_nn', 'pvp', 'eve'
-        this.userRole = 'A';           // Human role: 'A' (Green), 'B' (Red), or none
+        this.userRole = 'A';           // Human role: always 'A' (Green)
+        this.startingPlayer = 'A';     // Default starter: 'A' (Green)
         this.aiDepth = 5;
         this.gameStatus = 'ONGOING';   // 'ONGOING', 'ME_WINS', 'OPP_WINS'
         
@@ -171,11 +174,11 @@ class GameState {
 const game = new GameState();
 
 // Initialize application on load
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
     setupBoardLines();
     initializeSVG();
     setupEventListeners();
-    checkEngineStatus();
+    await checkEngineStatus();
     startNewGame();
 });
 
@@ -211,50 +214,30 @@ function setupBoardLines() {
 
 // Bind all UI interactive controls
 function setupEventListeners() {
-    // Mode selectors
-    document.getElementById('game-mode').addEventListener('change', (e) => {
-        game.gameMode = e.target.value;
-        const aiDepthGroup = document.getElementById('ai-options-group');
-        const roleGroup = document.getElementById('player-role-group');
-        
-        if (game.gameMode === 'pve') {
-            aiDepthGroup.style.display = 'block';
-            roleGroup.style.display = 'block';
-        } else if (game.gameMode === 'pve_nn') {
-            aiDepthGroup.style.display = 'none';
-            roleGroup.style.display = 'block';
-        } else if (game.gameMode === 'pvp') {
-            aiDepthGroup.style.display = 'none';
-            roleGroup.style.display = 'none';
-        } else if (game.gameMode === 'eve') {
-            aiDepthGroup.style.display = 'block';
-            roleGroup.style.display = 'none';
-        }
-    });
-
-    // AI Depth slider
-    const depthInput = document.getElementById('ai-depth');
-    const depthVal = document.getElementById('depth-value');
-    depthInput.addEventListener('input', (e) => {
-        depthVal.textContent = e.target.value;
-        game.aiDepth = parseInt(e.target.value, 10);
+    // AI Type selector
+    document.getElementById('ai-type').addEventListener('change', () => {
+        updateControlsVisibility();
     });
 
     // Role switcher (Green/Red)
-    document.getElementById('btn-play-green').addEventListener('click', () => {
-        document.getElementById('btn-play-green').classList.add('active');
-        document.getElementById('btn-play-red').classList.remove('active');
-        game.userRole = 'A';
+    // Starting player selection
+    document.getElementById('btn-start-green').addEventListener('click', () => {
+        document.getElementById('btn-start-green').classList.add('active');
+        document.getElementById('btn-start-red').classList.remove('active');
+        game.startingPlayer = 'A';
     });
 
-    document.getElementById('btn-play-red').addEventListener('click', () => {
-        document.getElementById('btn-play-red').classList.add('active');
-        document.getElementById('btn-play-green').classList.remove('active');
-        game.userRole = 'B';
+    document.getElementById('btn-start-red').addEventListener('click', () => {
+        document.getElementById('btn-start-red').classList.add('active');
+        document.getElementById('btn-start-green').classList.remove('active');
+        game.startingPlayer = 'B';
     });
 
     // Action buttons
-    document.getElementById('btn-new-game').addEventListener('click', startNewGame);
+    document.getElementById('btn-new-game').addEventListener('click', () => {
+        window.location.hash = ''; // clear shared state
+        startNewGame();
+    });
     document.getElementById('btn-undo').addEventListener('click', handleUndo);
     document.getElementById('btn-end-chain').addEventListener('click', handleEndChain);
     document.getElementById('btn-return-current').addEventListener('click', returnToCurrentGame);
@@ -262,6 +245,7 @@ function setupEventListeners() {
     // Modal buttons
     document.getElementById('btn-modal-restart').addEventListener('click', () => {
         document.getElementById('game-over-modal').style.display = 'none';
+        window.location.hash = ''; // clear shared state
         startNewGame();
     });
     
@@ -269,17 +253,18 @@ function setupEventListeners() {
         document.getElementById('game-over-modal').style.display = 'none';
     });
 
-    // Theme Switcher Toggle
-    document.getElementById('theme-toggle').addEventListener('click', () => {
-        const html = document.documentElement;
-        if (html.classList.contains('dark-mode')) {
-            html.classList.remove('dark-mode');
-            html.classList.add('light-mode');
-        } else {
-            html.classList.remove('light-mode');
-            html.classList.add('dark-mode');
-        }
-    });
+}
+
+// Update controls visibility based on AI type
+function updateControlsVisibility() {
+    const nnModelGroup = document.getElementById('nn-model-group');
+    const aiType = document.getElementById('ai-type').value;
+    
+    if (aiType === 'nn') {
+        nnModelGroup.style.display = 'block';
+    } else {
+        nnModelGroup.style.display = 'none';
+    }
 }
 
 // Check Backend Engine Status & NN availability
@@ -288,43 +273,57 @@ async function checkEngineStatus() {
         const response = await fetch('/api/engine_status');
         const data = await response.json();
         
-        document.getElementById('metric-backend').textContent = data.backend || 'C++20';
-        const nnStatus = document.getElementById('metric-nn-status');
-        if (data.has_nn_model) {
-            nnStatus.textContent = 'Loaded (model.pt)';
-            nnStatus.style.color = 'var(--color-green)';
-        } else {
-            nnStatus.textContent = 'Unavailable';
-            nnStatus.style.color = 'var(--app-text-muted)';
+        const nnSelect = document.getElementById('nn-model-select');
+        nnSelect.innerHTML = '';
+        if (data.available_models && data.available_models.length > 0) {
+            data.available_models.forEach(model => {
+                const opt = document.createElement('option');
+                opt.value = model;
+                opt.textContent = model;
+                nnSelect.appendChild(opt);
+            });
+        }
+
+        if (!data.has_nn_model) {
             // Disable neural net option if model is missing
-            const select = document.getElementById('game-mode');
-            const nnOpt = select.querySelector('option[value="pve_nn"]');
+            const select = document.getElementById('ai-type');
+            const nnOpt = select.querySelector('option[value="nn"]');
             if (nnOpt) {
                 nnOpt.disabled = true;
-                nnOpt.textContent = 'Player vs AI (NN - model.pt missing)';
+                nnOpt.textContent = 'Neural Network (model missing)';
             }
         }
+        updateControlsVisibility();
     } catch (error) {
         console.error('Failed to get engine status:', error);
-        document.getElementById('metric-nn-status').textContent = 'Error';
     }
 }
 
 // Start a fresh game configuration
 async function startNewGame() {
     set_loading(true);
-    game.reset();
     
     // Re-initialize SVG coordinates based on the selected player role/mode
     setupBoardLines();
     initializeSVG();
     
     try {
+        // Check if we are loading a shared state from URL hash
+        if (window.location.hash && loadStateFromUrl()) {
+            updateUI();
+            await fetchPossibleMoves();
+            if (game.currentPlayer !== game.userRole) {
+                setTimeout(triggerAIMove, 600);
+            }
+            return;
+        }
+        
+        game.reset();
         const response = await fetch('/api/init', { method: 'POST' });
         const data = await response.json();
         
         game.setMasks(data.me, data.opp, data.activeCaptureIdx);
-        game.currentPlayer = data.currentPlayer;
+        game.currentPlayer = game.startingPlayer;
         
         updateUI();
         await fetchPossibleMoves();
@@ -359,6 +358,11 @@ async function fetchPossibleMoves() {
         });
         const data = await response.json();
         game.possibleMoves = data.moves;
+        
+        // If the only move is to stop the capture chain (moveId = 0), auto-apply it
+        if (game.possibleMoves.length === 1 && game.possibleMoves[0].moveId === 0 && isHumanTurn()) {
+            await handleEndChain();
+        }
     } catch (e) {
         console.error('Failed to fetch possible moves:', e);
     }
@@ -378,6 +382,9 @@ function updateUI() {
     } else {
         endChainBtn.style.display = 'none';
     }
+    
+    // Synchronize current state to URL hash
+    updateUrlHash();
 }
 
 // Render piece counts
@@ -408,6 +415,9 @@ function renderCounts() {
     
     document.getElementById('count-a').textContent = `${piecesA} Pieces`;
     document.getElementById('count-b').textContent = `${piecesB} Pieces`;
+    
+    // Update stats grid cards
+    document.getElementById('stat-total-moves').textContent = game.moveLog.length;
 }
 
 // Update status bar header
@@ -462,13 +472,7 @@ function initializeSVG() {
         nodeCircle.addEventListener('click', () => handleNodeClick(i));
         nodesGroup.appendChild(nodeCircle);
         
-        // Add subtle index label inside empty nodes
-        const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        label.setAttribute("x", coord.x);
-        label.setAttribute("y", coord.y);
-        label.setAttribute("class", "node-label");
-        label.setAttribute("id", `node-label-${i}`);
-        nodesGroup.appendChild(label);
+
         
         // 2. Draw piece groups
         const pieceG = document.createElementNS("http://www.w3.org/2000/svg", "g");
@@ -481,27 +485,8 @@ function initializeSVG() {
         pieceCircle.setAttribute("r", 14);
         pieceG.appendChild(pieceCircle);
         
-        // Premium design details inside the piece (inner design ring)
-        const innerRing = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        innerRing.setAttribute("cx", coord.x);
-        innerRing.setAttribute("cy", coord.y);
-        innerRing.setAttribute("r", 9);
-        innerRing.setAttribute("fill", "none");
-        innerRing.setAttribute("stroke", "rgba(255,255,255,0.4)");
-        innerRing.setAttribute("stroke-width", "1");
-        pieceG.appendChild(innerRing);
-        
-        // Put index label inside the piece
-        const pieceText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        pieceText.setAttribute("x", coord.x);
-        pieceText.setAttribute("y", coord.y);
-        pieceText.setAttribute("fill", "#fff");
-        pieceText.setAttribute("font-size", "9px");
-        pieceText.setAttribute("font-weight", "800");
-        pieceText.setAttribute("text-anchor", "middle");
-        pieceText.setAttribute("dominant-baseline", "middle");
-        pieceText.setAttribute("id", `piece-text-${i}`);
-        pieceG.appendChild(pieceText);
+
+
         
         pieceG.addEventListener('click', (e) => {
             e.stopPropagation(); // prevent node circle triggering
@@ -559,14 +544,7 @@ function renderBoard() {
             pulse.style.display = 'none';
         }
         
-        // Label inside node
-        const label = document.getElementById(`node-label-${i}`);
-        if (!hasA && !hasB) {
-            label.textContent = displayNodeIndex;
-            label.style.display = 'block';
-        } else {
-            label.style.display = 'none';
-        }
+
         
         // 2. Update piece group
         const pieceG = document.getElementById(`piece-group-${i}`);
@@ -576,9 +554,7 @@ function renderBoard() {
             if (game.selectedPiece === i) {
                 pieceG.classList.add('selected');
             }
-            
-            const pieceText = document.getElementById(`piece-text-${i}`);
-            pieceText.textContent = displayNodeIndex;
+
         } else {
             pieceG.style.display = 'none';
         }
@@ -609,15 +585,42 @@ function renderHistory() {
         idx.className = 'history-index';
         idx.textContent = `${index + 1}.`;
         
+        let badgeText = "Move";
+        let badgeClass = "badge-default";
+        let cleanText = item;
+        
+        if (item.startsWith("Player A:")) {
+            badgeText = "P. A";
+            badgeClass = "badge-a";
+            cleanText = item.substring(9).trim();
+        } else if (item.startsWith("Player B:")) {
+            badgeText = "P. B";
+            badgeClass = "badge-b";
+            cleanText = item.substring(9).trim();
+        } else if (item.startsWith("AI (A):")) {
+            badgeText = "AI A";
+            badgeClass = "badge-a";
+            cleanText = item.substring(7).trim();
+        } else if (item.startsWith("AI (B):")) {
+            badgeText = "AI B";
+            badgeClass = "badge-b";
+            cleanText = item.substring(7).trim();
+        }
+        
+        const badge = document.createElement('span');
+        badge.className = `history-badge ${badgeClass}`;
+        badge.textContent = badgeText;
+        
         const txt = document.createElement('span');
         txt.className = 'history-move-text';
-        txt.textContent = item;
+        txt.textContent = cleanText;
         
         const time = document.createElement('span');
         time.className = 'history-time';
         time.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         
         row.appendChild(idx);
+        row.appendChild(badge);
         row.appendChild(txt);
         row.appendChild(time);
         
@@ -669,23 +672,14 @@ function renderBoardFromSnapshot(meStr, oppStr) {
         const pulse = document.getElementById(`target-pulse-${i}`);
         pulse.style.display = 'none';
         
-        // Label inside node
-        const label = document.getElementById(`node-label-${i}`);
-        if (!hasA && !hasB) {
-            label.textContent = i;
-            label.style.display = 'block';
-        } else {
-            label.style.display = 'none';
-        }
+
         
         // Piece group
         const pieceG = document.getElementById(`piece-group-${i}`);
         if (hasA || hasB) {
             pieceG.style.display = 'block';
             pieceG.className.baseVal = `game-piece ${hasA ? 'green-player' : 'red-player'}`;
-            
-            const pieceText = document.getElementById(`piece-text-${i}`);
-            pieceText.textContent = i;
+
         } else {
             pieceG.style.display = 'none';
         }
@@ -694,7 +688,7 @@ function renderBoardFromSnapshot(meStr, oppStr) {
 
 // Click listener for pieces
 function handlePieceClick(nodeId) {
-    if (game.isAnimating) return;
+    if (game.isLoading || game.isAnimating) return;
     if (game.viewingHistoryIndex >= 0) return; // Block interaction during history replay
     if (!isHumanTurn() || game.gameStatus !== 'ONGOING') return;
     
@@ -733,7 +727,7 @@ function handlePieceClick(nodeId) {
 
 // Click listener for empty nodes (target destination move trigger)
 async function handleNodeClick(nodeId) {
-    if (game.isAnimating) return;
+    if (game.isLoading || game.isAnimating) return;
     if (game.viewingHistoryIndex >= 0) return; // Block interaction during history replay
     if (!isHumanTurn() || game.selectedPiece === null) return;
     
@@ -771,7 +765,6 @@ async function applyUserMove(moveObj) {
                 currentPlayer: game.currentPlayer
             })
         });
-        
         const data = await response.json();
         
         // Log move description
@@ -869,7 +862,6 @@ async function triggerAIMove() {
     }
     
     set_loading(true, true);
-    document.getElementById('metric-search-status').textContent = 'Searching...';
     
     try {
         const response = await fetch('/api/ai_move', {
@@ -882,11 +874,11 @@ async function triggerAIMove() {
                     activeCaptureIdx: game.activeCaptureIdx
                 },
                 currentPlayer: game.currentPlayer,
-                aiType: game.gameMode === 'pve_nn' ? 'nn' : 'minimax',
-                depth: game.aiDepth
+                aiType: document.getElementById('ai-type').value,
+                depth: game.aiDepth,
+                modelFile: document.getElementById('nn-model-select').value
             })
         });
-        
         const data = await response.json();
         
         if (data.moveId === -1) {
@@ -938,7 +930,7 @@ async function triggerAIMove() {
         if (data.nextState.activeCaptureIdx === -1) {
             game.currentPlayer = game.currentPlayer === 'A' ? 'B' : 'A';
         }
-
+ 
         // Render the new board layout immediately to avoid visual lag or glitches
         updateUI();
         
@@ -973,7 +965,6 @@ async function triggerAIMove() {
         console.error('Error during AI calculations:', e);
     } finally {
         set_loading(false);
-        document.getElementById('metric-search-status').textContent = 'Idle';
     }
 }
 
@@ -1066,7 +1057,86 @@ function animate_move(fromNode, toNode, capturedNode, callback) {
  * @details Prevents display of the blocking thinking overlay.
  */
 function set_loading(isLoading, isAi = false) {
-    // No-op to support seamless gameplay
+    game.isLoading = isLoading;
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) {
+        overlay.style.display = isLoading ? 'flex' : 'none';
+        const msg = document.getElementById('loading-message');
+        if (msg) {
+            msg.textContent = isAi ? "AI IS THINKING..." : "LOADING...";
+        }
+    }
+    
+    // Disable interactions on board container
+    const boardContainer = document.querySelector('.neo-board-container');
+    if (boardContainer) {
+        if (isLoading) {
+            boardContainer.style.pointerEvents = 'none';
+        } else {
+            boardContainer.style.pointerEvents = 'auto';
+        }
+    }
+}
+
+/**
+ * @brief Serializes current game state and embeds it in the URL hash fragment.
+ */
+function updateUrlHash() {
+    try {
+        const stateObj = {
+            me: game.me,
+            opp: game.opp,
+            activeCaptureIdx: game.activeCaptureIdx,
+            currentPlayer: game.currentPlayer,
+            startingPlayer: game.startingPlayer,
+            aiType: document.getElementById('ai-type').value,
+            modelFile: document.getElementById('nn-model-select') ? document.getElementById('nn-model-select').value : ''
+        };
+        const serialized = btoa(JSON.stringify(stateObj));
+        window.history.replaceState(null, null, "#" + serialized);
+    } catch (e) {
+        console.error("Failed to update URL hash:", e);
+    }
+}
+
+/**
+ * @brief Decodes game state from the URL hash fragment.
+ * @return True if state was successfully restored, false otherwise.
+ */
+function loadStateFromUrl() {
+    const hash = window.location.hash.substring(1);
+    if (!hash) return false;
+    try {
+        const stateObj = JSON.parse(atob(hash));
+        game.me = stateObj.me;
+        game.opp = stateObj.opp;
+        game.activeCaptureIdx = stateObj.activeCaptureIdx;
+        game.currentPlayer = stateObj.currentPlayer;
+        game.startingPlayer = stateObj.startingPlayer || 'A';
+        game.userRole = 'A'; // always Green
+        
+        if (stateObj.aiType) {
+            document.getElementById('ai-type').value = stateObj.aiType;
+        }
+        if (stateObj.modelFile && document.getElementById('nn-model-select')) {
+            document.getElementById('nn-model-select').value = stateObj.modelFile;
+        }
+        
+        // Sync active class on who-starts selector buttons
+        if (game.startingPlayer === 'A') {
+            document.getElementById('btn-start-green').classList.add('active');
+            document.getElementById('btn-start-red').classList.remove('active');
+        } else {
+            document.getElementById('btn-start-red').classList.add('active');
+            document.getElementById('btn-start-green').classList.remove('active');
+        }
+        
+        updateControlsVisibility();
+        return true;
+    } catch (e) {
+        console.error("Failed to parse state from URL:", e);
+        return false;
+    }
 }
 
 // Show GameOver Modal dialog popup
@@ -1079,20 +1149,20 @@ function showGameOverModal() {
     let winner = game.gameStatus === 'ME_WINS' ? 'A' : 'B';
     title.textContent = `Player ${winner} Wins!`;
     
+    if (icon) {
+        icon.style.display = 'none';
+    }
+    
     if (game.gameMode === 'pvp') {
-        icon.textContent = '🏆';
         message.textContent = `Excellent match! Player ${winner} has captured all opponent pieces and dominates the board.`;
     } else if (game.gameMode.startsWith('pve')) {
         const humanWon = winner === game.userRole;
         if (humanWon) {
-            icon.textContent = '🎉';
             message.textContent = "Spectacular! You successfully outsmarted the C++ AI Engine and won the game!";
         } else {
-            icon.textContent = '🤖';
             message.textContent = "AI engine has captured all your pieces. Keep practicing to master the Sholo Guti board!";
         }
     } else { // EvE simulation
-        icon.textContent = '📊';
         message.textContent = `AI simulation concluded. Player ${winner} AI won the match.`;
     }
     

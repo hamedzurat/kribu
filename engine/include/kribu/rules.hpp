@@ -205,6 +205,8 @@ struct MoveList {
   return flipped;
 }
 
+[[nodiscard]] constexpr bool can_continue_capturing(const boardState& next, i8 fromNode) noexcept;
+
 /**
  * @brief Applies a move to the board state and returns the resulting board state.
  * @note  No validity checks are performed. The caller must verify legitimacy beforehand.
@@ -238,6 +240,9 @@ struct MoveList {
     next.hash ^= kribu::zobrist::KEYS.opp[mov.captured];
 
     i8 nextCaptureIdx = mov.to;
+    if (!can_continue_capturing(next, nextCaptureIdx)) {
+      nextCaptureIdx = -1;
+    }
 
     int oldCap = (state.activeCaptureIdx == -1) ? 37 : state.activeCaptureIdx;
     int newCap = (nextCaptureIdx == -1) ? 37 : nextCaptureIdx;
