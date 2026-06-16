@@ -11,12 +11,6 @@ from trainer.model import SholoGutiNet
 
 MAX_REPETITION_HISTORY = 64.0
 POLICY_LOGIT_WEIGHT = 0.15
-ROOT_SEARCH_DEPTH = 2
-ROOT_CANDIDATE_LIMIT = 8
-REPLY_CANDIDATE_LIMIT = 6
-DRAW_CONTEMPT_WEIGHT = 0.08
-DRAW_HISTORY_PENALTY = 0.06
-LEAF_DRAW_BLEND = 0.20
 
 
 class NeuralPlayer:
@@ -115,98 +109,12 @@ class NeuralPlayer:
             policy_logits, value = self.model(features)
         return policy_logits, value
 
-    def _legal_moves(self, state: kribu.boardState) -> list[int]:
-        """Return legal move ids for one state."""
-        return list(kribu.all_possible_moves(state))
-
-    def _apply_move(self, state: kribu.boardState, move_id: int) -> kribu.boardState:
-        """Return the successor state after applying one move."""
-        return kribu.apply_move(state, move_id)
-
-    def _flip_board(self, state: kribu.boardState) -> kribu.boardState:
-        """Return the board with perspective swapped."""
-        return kribu.flip_board(state)
-
-    def _piece_balance(self, state: kribu.boardState) -> float:
-        """Return a normalized material edge from the current player's perspective."""
-        return max(-1.0, min(1.0, (int(state.me).bit_count() - int(state.opp).bit_count()) / 16.0))
-
-    def _draw_score(self, state: kribu.boardState) -> float:
-        """Return a draw value with mild contempt for sterile positions when ahead."""
-        history_penalty = DRAW_HISTORY_PENALTY * min(1.0, float(state.historyCount) / MAX_REPETITION_HISTORY)
-        score = 0.5 + DRAW_CONTEMPT_WEIGHT * self._piece_balance(state) - history_penalty
-        return max(0.0, min(1.0, score))
-
-    def _terminal_score(self, state: kribu.boardState) -> float | None:
-        """Return a terminal score from the current player's perspective, or None if non-terminal."""
-        if int(state.opp) == 0:
-            return 1.0
-        if int(state.me) == 0:
-            return 0.0
-        if int(state.historyCount) >= int(MAX_REPETITION_HISTORY):
-            return self._draw_score(state)
-
-        legal_moves = self._legal_moves(state)
-        if not legal_moves:
-            return 0.0
-        if not self._legal_moves(self._flip_board(state)):
-            return 1.0
-        return None
-
-    def _leaf_score(self, state: kribu.boardState, predicted_value: float) -> float:
-        """Blend leaf value with draw contempt so neutral loop states are less attractive."""
-        blended = (1.0 - LEAF_DRAW_BLEND) * predicted_value + LEAF_DRAW_BLEND * self._draw_score(state)
-        return max(0.0, min(1.0, blended))
-
-    def _candidate_moves(
-        self,
-        valid_moves: list[int],
-        policy_logits: torch.Tensor,
-        limit: int,
-    ) -> list[int]:
-        """Return the highest-priority legal moves according to the policy head."""
-        if len(valid_moves) <= limit:
-            return list(valid_moves)
-
-        move_indices = torch.tensor(valid_moves, dtype=torch.long, device=self.device)
-        valid_logits = policy_logits[move_indices]
-        top_count = min(limit, len(valid_moves))
-        top_indices = torch.topk(valid_logits, k=top_count, dim=0).indices.tolist()
-        return [valid_moves[int(index)] for index in top_indices]
-
-    def _search_score(self, state: kribu.boardState, depth: int) -> float:
-        """Return a shallow search score from the current player's perspective."""
-        terminal_score = self._terminal_score(state)
-        if terminal_score is not None:
-            return terminal_score
-
-        policy_logits, value = self._infer_batch([self._encode_state_features(state)])
-        predicted_value = self._leaf_score(state, float(value[0].item()))
-        if depth <= 0:
+    def _successor_value_for_move(self, state: kribu.boardState, move_id: int, predicted_value: float) -> float:
+        """Convert successor-side value into current-player value for one candidate move."""
+        next_state = kribu.apply_move(state, move_id)
+        if next_state.activeCaptureIdx != -1:
             return predicted_value
-
-        valid_moves = self._legal_moves(state)
-        candidate_limit = ROOT_CANDIDATE_LIMIT if depth >= ROOT_SEARCH_DEPTH else REPLY_CANDIDATE_LIMIT
-        candidate_moves = self._candidate_moves(valid_moves, policy_logits[0], candidate_limit)
-        move_indices = torch.tensor(candidate_moves, dtype=torch.long, device=self.device)
-        valid_logits = policy_logits[0][move_indices]
-        valid_log_probs = torch.log_softmax(valid_logits, dim=0)
-
-        best_score = float("-inf")
-        for idx, move_id in enumerate(candidate_moves):
-            next_state = self._apply_move(state, move_id)
-            turn_flips = next_state.activeCaptureIdx == -1
-            search_state = self._flip_board(next_state) if turn_flips else next_state
-            child_depth = depth - 1 if turn_flips else depth
-            child_score = self._search_score(search_state, child_depth)
-            move_score = 1.0 - child_score if turn_flips else child_score
-            score = move_score + POLICY_LOGIT_WEIGHT * float(valid_log_probs[idx].item())
-            if score > best_score:
-                best_score = score
-
-        if best_score == float("-inf"):
-            return predicted_value
-        return max(0.0, min(1.0, best_score))
+        return 1.0 - predicted_value
 
     def _select_move_with_value_guidance(
         self,
@@ -214,22 +122,26 @@ class NeuralPlayer:
         valid_moves: list[int],
         current_policy_logits: torch.Tensor,
     ) -> int:
-        """Choose among valid moves using shallow search plus policy prior."""
-        candidate_moves = self._candidate_moves(valid_moves, current_policy_logits, ROOT_CANDIDATE_LIMIT)
-        move_indices = torch.tensor(candidate_moves, dtype=torch.long, device=self.device)
+        """Choose among valid moves using one-ply value guidance plus policy prior."""
+        successor_states = []
+        for move_id in valid_moves:
+            next_state = kribu.apply_move(state, move_id)
+            if next_state.activeCaptureIdx == -1:
+                next_state = kribu.flip_board(next_state)
+            successor_states.append(next_state)
+
+        _, successor_values = self._infer_batch(
+            [self._encode_state_features(next_state) for next_state in successor_states]
+        )
+        move_indices = torch.tensor(valid_moves, dtype=torch.long, device=self.device)
         valid_logits = current_policy_logits[move_indices]
         valid_log_probs = torch.log_softmax(valid_logits, dim=0)
 
-        best_move = candidate_moves[0]
+        best_move = valid_moves[0]
         best_score = float("-inf")
-        for idx, move_id in enumerate(candidate_moves):
-            next_state = self._apply_move(state, move_id)
-            turn_flips = next_state.activeCaptureIdx == -1
-            search_state = self._flip_board(next_state) if turn_flips else next_state
-            child_depth = ROOT_SEARCH_DEPTH - 1 if turn_flips else ROOT_SEARCH_DEPTH
-            child_score = self._search_score(search_state, child_depth)
-            move_score = 1.0 - child_score if turn_flips else child_score
-            score = move_score + POLICY_LOGIT_WEIGHT * float(valid_log_probs[idx].item())
+        for idx, move_id in enumerate(valid_moves):
+            move_value = self._successor_value_for_move(state, move_id, float(successor_values[idx].item()))
+            score = move_value + POLICY_LOGIT_WEIGHT * float(valid_log_probs[idx].item())
             if score > best_score:
                 best_score = score
                 best_move = move_id

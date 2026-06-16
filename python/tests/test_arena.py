@@ -7,7 +7,6 @@ from kribu import (
 )
 import os
 import torch
-from arena.__main__ import piece_margin_summary
 from arena.player import NeuralPlayer
 from trainer.model import SholoGutiNet
 
@@ -26,12 +25,6 @@ def test_additional_arena_opponents_return_legal_moves():
 
     assert minimax_player_4(INITIAL_STATE) in valid_moves
     assert minimax_player_8_mad2(INITIAL_STATE) in valid_moves
-
-
-def test_piece_margin_summary_keeps_draw_and_piece_count_context():
-    assert piece_margin_summary(3, 3) == "+0 pcs (3-3)"
-    assert piece_margin_summary(5, 2) == "+3 pcs (5-2)"
-    assert piece_margin_summary(1, 4) == "-3 pcs (1-4)"
 
 
 def test_neural_player_dynamic_architecture(tmp_path):
@@ -104,16 +97,9 @@ def test_neural_player_uses_value_guidance_for_valid_moves(tmp_path):
             return policy, value
 
     player.model = CaptureModel(265, preferred_move, value_preferred_move)
-
-    class FakeState:
-        def __init__(self, tag: str):
-            self.tag = tag
-            self.activeCaptureIdx = -1
-
-    player._apply_move = lambda _state, move_id: FakeState(f"move:{move_id}")
-    player._flip_board = lambda state: state
-    player._search_score = lambda state, _depth: 0.1 if state.tag == f"move:{value_preferred_move}" else 0.9
-
+    player._successor_value_for_move = lambda _state, move_id, predicted_value: (
+        predicted_value if move_id == value_preferred_move else 0.0
+    )
     move_id, _ = player.get_move(
         INITIAL_STATE.me,
         INITIAL_STATE.opp,
@@ -123,48 +109,6 @@ def test_neural_player_uses_value_guidance_for_valid_moves(tmp_path):
     )
 
     assert move_id == value_preferred_move
-
-
-def test_neural_player_search_avoids_policy_trap(tmp_path):
-    model = SholoGutiNet(input_features=83, hidden_dim=32, num_residual_blocks=1, action_space=265)
-    modelPath = os.path.join(tmp_path, "search_model.pt")
-    torch.save({"model": model.state_dict(), "use_value_guidance": True}, modelPath)
-
-    player = NeuralPlayer(model_path=modelPath, device="cpu")
-    candidate_moves = [7, 11, 19]
-
-    class TrapModel(torch.nn.Module):
-        def forward(self, x):
-            batch = x.shape[0]
-            policy = torch.full((batch, 265), -10.0)
-            policy[:, 7] = 0.5
-            policy[:, 11] = 3.0
-            policy[:, 19] = 2.0
-            return policy, torch.full((batch,), 0.5)
-
-    class FakeState:
-        def __init__(self, tag: str):
-            self.tag = tag
-            self.activeCaptureIdx = -1
-
-    player.model = TrapModel()
-    player._apply_move = lambda _state, move_id: FakeState(f"move:{move_id}")
-    player._flip_board = lambda state: state
-    player._search_score = lambda state, _depth: {
-        "move:7": 0.8,
-        "move:11": 0.9,
-        "move:19": 0.2,
-    }[state.tag]
-
-    move_id, _ = player.get_move(
-        INITIAL_STATE.me,
-        INITIAL_STATE.opp,
-        INITIAL_STATE.activeCaptureIdx,
-        valid_moves=candidate_moves,
-        state=INITIAL_STATE,
-    )
-
-    assert move_id == 19
 
 
 def test_neural_player_policy_only_skips_value_guidance(tmp_path):
