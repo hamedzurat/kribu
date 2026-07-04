@@ -19,6 +19,7 @@ Checks: >
   -readability-magic-numbers,
   -bugprone-chained-comparison,
   -portability-avoid-pragma-once,
+  -bugprone-easily-swappable-parameters,
   -system-headers=false
 
 WarningsAsErrors: ""
@@ -31,4 +32,4 @@ CheckOptions:
   - key: readability-function-size.MaxNestingLevel
     value: "4"
   - key: readability-function-cognitive-complexity.Threshold
-    value: "15"
+    value: "20"

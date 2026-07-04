@@ -16,6 +16,7 @@
 #include <tuple>
 #include <utility>
 
+#include "kribu/zobrist.hpp"
 #include "types.hpp"
 
 /**
@@ -23,6 +24,11 @@
  * @brief Namespace containing the data structures, types, and constants representing the board.
  */
 namespace kribu::board {
+
+/**
+ * @brief Rolling history buffer size for game repetition tracking.
+ */
+inline constexpr int MAX_HISTORY_LIMIT = 64;
 
 /**
  * @struct boardState
@@ -51,14 +57,35 @@ struct boardState {
   i8 activeCaptureIdx = -1;
 
   /**
+   * @brief Incremental Zobrist hash key representing the board state.
+   */
+  u64 hash = 0;
+
+  /**
+   * @brief Rolling history of position hashes to detect repetitions.
+   */
+  std::array<u64, MAX_HISTORY_LIMIT> history{};
+
+  /**
+   * @brief Count of valid hashes currently stored in the rolling history.
+   */
+  u8 historyCount = 0;
+
+  /**
    * @brief Compares two board states for exact equality of piece placements and capture states.
    * @param other The board state to compare against.
-   * @return True if both player masks and active capture indices are identical, false otherwise.
+   * @return True if both player masks, active capture indices, hashes, and histories are identical, false otherwise.
    */
   bool operator==(const boardState& other) const {
-    return me == other.me && opp == other.opp && activeCaptureIdx == other.activeCaptureIdx;
+    return hash == other.hash && me == other.me && opp == other.opp && activeCaptureIdx == other.activeCaptureIdx
+           && historyCount == other.historyCount
+           && std::equal(history.begin(), history.begin() + historyCount, other.history.begin());
   }
 };
+
+}  // namespace kribu::board
+
+namespace kribu::board {
 
 /**
  * @brief The standard initial layout of a Sholo Guti board.
@@ -72,6 +99,8 @@ constexpr boardState INITIAL_STATE{
     .me = 0x0000'001F'FFE0'0000ULL,   // Bits 21-36
     .opp = 0x0000'0000'0000'FFFFULL,  // Bits 0-15
     .activeCaptureIdx = -1,
+    .hash = kribu::zobrist::compute_hash(
+        {.activePlayer = 0x0000'001F'FFE0'0000ULL, .opponentPlayer = 0x0000'0000'0000'FFFFULL, .activeCaptureIdx = -1}),
 };
 
 /**
@@ -469,14 +498,44 @@ namespace detail {
  * @brief Stores structural properties of the board computed at compile time.
  */
 struct boardMetadata {
+  /**
+   * @brief Adjacency lists for each node, containing neighbor node indices.
+   */
   std::array<std::array<i8, 8>, NUM_NODES> neighbors{};
+
+  /**
+   * @brief Count of neighbors for each node.
+   */
   std::array<i8, NUM_NODES> counts{};
+
+  /**
+   * @brief Map storing capture move indices originating from each node.
+   */
   std::array<std::array<i16, 8>, NUM_NODES> captureMoveIdxByNode{};
+
+  /**
+   * @brief Count of capture moves originating from each node.
+   */
   std::array<i8, NUM_NODES> captureMoveCountByNode{};
+
+  /**
+   * @brief Mapping from [fromNode][toNode] to the corresponding move ID (-1 if invalid).
+   */
   std::array<std::array<i16, NUM_NODES>, NUM_NODES> moveIdMap{};
 
+  /**
+   * @brief Total number of simple moves on the board topology.
+   */
   int numSimpleMoves = 0;
+
+  /**
+   * @brief Total number of capture moves on the board topology.
+   */
   int numCaptureMoves = 0;
+
+  /**
+   * @brief Maximum number of moves theoretically possible in any single state.
+   */
   int maxMovesPerState = 0;
 };
 

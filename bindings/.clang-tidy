@@ -1,7 +1,0 @@
-# clang-tidy overrides for Python bindings.
-# nanobind uses macro-heavy metaprogramming (NB_MODULE, nb::class_, etc.) that
-# confuses clang-tidy's static parser when run outside the full build graph.
-# We disable clang-diagnostic-error here to prevent false positives from
-# unresolved nanobind template expansions.
----
-Checks: "-clang-diagnostic-error"

@@ -9,10 +9,17 @@
 
 #include <array>
 #include <bit>
+#include <eve/eve.hpp>
+#include <eve/module/core.hpp>
 #include <stdexcept>
 
 #include "board.hpp"
 #include "types.hpp"
+#include "zobrist.hpp"
+
+namespace kribu {
+// Thread-local configurations and game history moved or removed to avoid process-wide globals.
+}  // namespace kribu
 
 /**
  * @namespace kribu::sholoGuti
@@ -28,9 +35,14 @@ using namespace kribu::board;
  */
 enum class GameStatus : i8 {
   /**
-   * @brief Opponent has won the game (active player has lost all pieces or has no moves left).
+   * @brief Opponent has won because the active player has no moves left (stalemate).
    */
-  OPP_WINS = -1,
+  OPP_WINS_STALEMATE = -2,
+
+  /**
+   * @brief Opponent has won because the active player has lost all pieces.
+   */
+  OPP_WINS_ELIMINATION = -1,
 
   /**
    * @brief Game is still active and ongoing.
@@ -38,9 +50,19 @@ enum class GameStatus : i8 {
   ONGOING = 0,
 
   /**
-   * @brief Active player (me) has won the game (opponent has lost all pieces or has no moves left).
+   * @brief Active player (me) has won because the opponent has lost all pieces.
    */
-  ME_WINS = 1,
+  ME_WINS_ELIMINATION = 1,
+
+  /**
+   * @brief Active player (me) has won because the opponent has no moves left (stalemate).
+   */
+  ME_WINS_STALEMATE = 2,
+
+  /**
+   * @brief Game is drawn due to progress limit (no capture for MAX_HISTORY_LIMIT moves).
+   */
+  DRAW_PROGRESS_RULE = 3,
 };
 
 /**
@@ -63,19 +85,19 @@ struct MoveList {
    * @brief Appends a move ID to the list.
    * @param moveId The ID of the move to append.
    */
-  void push(i16 moveId) noexcept { moves[count++] = moveId; }
+  constexpr void push(i16 moveId) noexcept { moves[count++] = moveId; }
 
   /**
    * @brief Returns a pointer to the beginning of the list.
    * @return Const iterator pointer to the first element.
    */
-  [[nodiscard]] const i16* begin() const noexcept { return moves.data(); }
+  [[nodiscard]] constexpr const i16* begin() const noexcept { return moves.data(); }
 
   /**
    * @brief Returns a pointer to the end of the list.
    * @return Const iterator pointer to one-past-the-last element.
    */
-  [[nodiscard]] const i16* end() const noexcept { return moves.data() + count; }
+  [[nodiscard]] constexpr const i16* end() const noexcept { return moves.data() + count; }
 
   /**
    * @brief Checks if the list is empty.
@@ -96,7 +118,7 @@ struct MoveList {
  * @return Count of set bits (pieces).
  */
 [[nodiscard]] inline i32 piece_count(u64 mask) noexcept {
-  return static_cast<i32>(std::popcount(mask));
+  return static_cast<i32>(eve::popcount(mask));
 }
 
 /**
@@ -105,7 +127,7 @@ struct MoveList {
  * @return Decoded Move struct.
  * @throws std::out_of_range If moveId is invalid.
  */
-[[nodiscard]] inline move decode_move(int moveId) {
+[[nodiscard]] constexpr move decode_move(int moveId) {
   if (moveId < 0 || moveId >= TOTAL_MOVE_COUNT) {
     throw std::out_of_range("Invalid move ID");
   }
@@ -117,7 +139,7 @@ struct MoveList {
  * @param moveId Move ID to check.
  * @return True if it is a simple move, false otherwise.
  */
-[[nodiscard]] inline bool is_simple_move(int moveId) noexcept {
+[[nodiscard]] constexpr bool is_simple_move(int moveId) noexcept {
   return moveId > END_CHAIN_MOVE && moveId <= NUM_SIMPLE_MOVES;
 }
 
@@ -126,7 +148,7 @@ struct MoveList {
  * @param moveId Move ID to check.
  * @return True if it is a capture move, false otherwise.
  */
-[[nodiscard]] inline bool is_capture_move(int moveId) noexcept {
+[[nodiscard]] constexpr bool is_capture_move(int moveId) noexcept {
   return moveId > NUM_SIMPLE_MOVES && moveId < TOTAL_MOVE_COUNT;
 }
 
@@ -136,7 +158,7 @@ struct MoveList {
  * @param dst  Destination node index.
  * @return The move ID, or -1 if no such move exists in the static move table.
  */
-[[nodiscard]] inline int find_move(i8 from, i8 dst) noexcept {
+[[nodiscard]] constexpr int find_move(i8 from, i8 dst) noexcept {
   if (from < 0 || from >= NUM_NODES || dst < 0 || dst >= NUM_NODES) {
     return -1;
   }
@@ -149,7 +171,7 @@ struct MoveList {
  * @param state Current BoardState.
  * @return Mirrored BoardState.
  */
-[[nodiscard]] inline boardState flip_board(const boardState& state) noexcept {
+[[nodiscard]] constexpr boardState flip_board(const boardState& state) noexcept {
   constexpr std::array<i8, NUM_NODES> FLIP_MAP = {36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24,
                                                   23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11,
                                                   10, 9,  8,  7,  6,  5,  4,  3,  2,  1,  0};
@@ -175,58 +197,170 @@ struct MoveList {
     flipped.me |= (1ULL << FLIP_MAP[std::countr_zero(bits)]);
   }
 
+  flipped.history = state.history;
+  flipped.historyCount = state.historyCount;
+
+  flipped.hash = kribu::zobrist::compute_hash(
+      {.activePlayer = flipped.me, .opponentPlayer = flipped.opp, .activeCaptureIdx = flipped.activeCaptureIdx});
   return flipped;
+}
+
+[[nodiscard]] constexpr bool can_continue_capturing(const boardState& next, i8 fromNode) noexcept;
+
+/**
+ * @brief Applies a move to the board state and returns the resulting board state.
+ * @note  No validity checks are performed. The caller must verify legitimacy beforehand.
+ * @param state  Current BoardState.
+ * @param moveId A valid move ID.
+ * @return Resulting BoardState.
+ */
+[[nodiscard]] constexpr boardState apply_move(const boardState& state, int moveId) noexcept {
+  boardState next = state;
+
+  if (moveId == END_CHAIN_MOVE) {
+    if (state.activeCaptureIdx != -1) {
+      next.hash ^= kribu::zobrist::KEYS.activeCapture[state.activeCaptureIdx];
+      next.hash ^= kribu::zobrist::KEYS.activeCapture[37];
+    }
+    next.activeCaptureIdx = -1;
+    next.historyCount = 0;
+    return next;
+  }
+
+  const move& mov = MOVE_TABLE[moveId];
+  next.me &= ~(1ULL << mov.from);
+  next.me |= (1ULL << mov.to);
+
+  // Update hash for moving active piece
+  next.hash ^= kribu::zobrist::KEYS.me[mov.from];
+  next.hash ^= kribu::zobrist::KEYS.me[mov.to];
+
+  if (is_capture_move(moveId)) {
+    next.opp &= ~(1ULL << mov.captured);
+    next.hash ^= kribu::zobrist::KEYS.opp[mov.captured];
+
+    i8 nextCaptureIdx = mov.to;
+    if (!can_continue_capturing(next, nextCaptureIdx)) {
+      nextCaptureIdx = -1;
+    }
+
+    int oldCap = (state.activeCaptureIdx == -1) ? 37 : state.activeCaptureIdx;
+    int newCap = (nextCaptureIdx == -1) ? 37 : nextCaptureIdx;
+    next.hash ^= kribu::zobrist::KEYS.activeCapture[oldCap];
+    next.hash ^= kribu::zobrist::KEYS.activeCapture[newCap];
+
+    next.activeCaptureIdx = nextCaptureIdx;
+    next.historyCount = 0;
+  } else {
+    int oldCap = (state.activeCaptureIdx == -1) ? 37 : state.activeCaptureIdx;
+    next.hash ^= kribu::zobrist::KEYS.activeCapture[oldCap];
+    next.hash ^= kribu::zobrist::KEYS.activeCapture[37];
+
+    next.activeCaptureIdx = -1;
+
+    if (next.historyCount < MAX_HISTORY_LIMIT) {
+      next.history[next.historyCount] = state.hash;
+      next.historyCount++;
+    } else {
+      for (int i = 0; i < MAX_HISTORY_LIMIT - 1; ++i) {
+        next.history[i] = next.history[i + 1];
+      }
+      next.history[MAX_HISTORY_LIMIT - 1] = state.hash;
+    }
+  }
+
+  return next;
+}
+
+/**
+ * @brief Computes the Zobrist hash of a flipped board state directly without full board construction.
+ * @param state Current BoardState.
+ * @return Flipped board state hash.
+ */
+[[nodiscard]] constexpr u64 compute_flipped_hash(const boardState& state) noexcept {
+  u64 hash = 0;
+  for (u64 bits = state.me; bits != 0U; bits &= bits - 1) {
+    hash ^= kribu::zobrist::KEYS.opp[36 - std::countr_zero(bits)];
+  }
+  for (u64 bits = state.opp; bits != 0U; bits &= bits - 1) {
+    hash ^= kribu::zobrist::KEYS.me[36 - std::countr_zero(bits)];
+  }
+  int capIdx = (state.activeCaptureIdx == -1) ? 37 : (36 - state.activeCaptureIdx);
+  hash ^= kribu::zobrist::KEYS.activeCapture[capIdx];
+  return hash;
+}
+
+/**
+ * @brief Checks if a move results in a board state that violates threefold repetition rules.
+ * @param state  Current BoardState.
+ * @param moveId Move ID to check.
+ * @return True if the move is repetition-legal, false otherwise.
+ */
+[[nodiscard]] constexpr bool is_repetition_legal(const boardState& state, int moveId) noexcept {
+  boardState next = apply_move(state, moveId);
+  u64 nextHash = 0;
+  if (next.activeCaptureIdx == -1) {
+    nextHash = compute_flipped_hash(next);
+  } else {
+    nextHash = next.hash;
+  }
+  int repetitions = 0;
+  for (u32 i = 0; i < state.historyCount; ++i) {
+    if (state.history[i] == nextHash) {
+      repetitions++;
+    }
+  }
+  return repetitions < 2;
 }
 
 /**
  * @brief Validates if a specific move ID is legal in the given board state.
- * @details Checks starting-piece ownership, target occupancy, and jump-capture rules.
+ * @details Checks starting-piece ownership, target occupancy, jump-capture rules, and repetition rules.
  *          If a capture chain is active, it enforces that only the capturing piece can move.
  * @param state  Current BoardState.
  * @param moveId Move ID to validate.
  * @return True if the move is legal, false otherwise.
  */
-[[nodiscard]] inline bool is_valid(const boardState& state, int moveId) noexcept {
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+[[nodiscard]] constexpr bool is_valid(const boardState& state, int moveId) noexcept {
   if (moveId < 0 || moveId >= TOTAL_MOVE_COUNT) {
     return false;
   }
 
+  bool basicValid = false;
   if (state.activeCaptureIdx != -1) {
     if (moveId == END_CHAIN_MOVE) {
-      return true;
+      basicValid = true;
+    } else if (!is_capture_move(moveId)) {
+      basicValid = false;
+    } else {
+      const move& mov = MOVE_TABLE[moveId];
+      if (mov.from != state.activeCaptureIdx || (((state.me | state.opp) >> mov.to) & 1U) != 0U) {
+        basicValid = false;
+      } else {
+        basicValid = ((state.opp >> mov.captured) & 1U) != 0U;
+      }
     }
-    if (!is_capture_move(moveId)) {
-      return false;
+  } else {
+    if (moveId == END_CHAIN_MOVE) {
+      basicValid = false;
+    } else {
+      const move& mov = MOVE_TABLE[moveId];
+      if (((state.me >> mov.from) & 1U) == 0U || (((state.me | state.opp) >> mov.to) & 1U) != 0U) {
+        basicValid = false;
+      } else if (is_simple_move(moveId)) {
+        basicValid = true;
+      } else {
+        basicValid = ((state.opp >> mov.captured) & 1U) != 0U;
+      }
     }
-    const move& mov = MOVE_TABLE[moveId];
-    if (mov.from != state.activeCaptureIdx) {
-      return false;
-    }
-    // bitwise check: (state.me | state.opp) combined mask of all pieces.
-    // >> mov.to shifts target node bit to LSB position, & 1U checks if it is occupied (1) or empty (0).
-    if ((((state.me | state.opp) >> mov.to) & 1U) != 0U) {
-      return false;
-    }
-    // bitwise check: (state.opp >> mov.captured) & 1U checks if captured node has an opponent piece.
-    return ((state.opp >> mov.captured) & 1U) != 0U;
   }
 
-  if (moveId == END_CHAIN_MOVE) {
+  if (!basicValid) {
     return false;
   }
 
-  const move& mov = MOVE_TABLE[moveId];
-  // bitwise check: (state.me >> mov.from) & 1U checks if starting node contains own piece.
-  if (((state.me >> mov.from) & 1U) == 0U) {
-    return false;
-  }
-  if ((((state.me | state.opp) >> mov.to) & 1U) != 0U) {
-    return false;
-  }
-  if (is_simple_move(moveId)) {
-    return true;
-  }
-  return ((state.opp >> mov.captured) & 1U) != 0U;
+  return is_repetition_legal(state, moveId);
 }
 
 /**
@@ -237,7 +371,7 @@ struct MoveList {
  * @param fromNode Node where the capturing piece now resides.
  * @return True if at least one further capture is legal, false otherwise.
  */
-[[nodiscard]] inline bool can_continue_capturing(const boardState& next, i8 fromNode) noexcept {
+[[nodiscard]] constexpr bool can_continue_capturing(const boardState& next, i8 fromNode) noexcept {
   // Bitmask of all occupied nodes on the board.
   const u64 occupied = next.me | next.opp;
   // To prevent the bugprone-signed-char-misuse lint error when converting signed i8 to int,
@@ -261,12 +395,11 @@ struct MoveList {
  * @param state Current BoardState.
  * @return Stack-allocated MoveList of valid move IDs.
  */
-[[nodiscard]] inline MoveList all_possible_moves(const boardState& state) noexcept {
+[[nodiscard]] constexpr MoveList all_possible_moves(const boardState& state) noexcept {
   MoveList list;
 
   if (state.activeCaptureIdx != -1) {
     list.push(static_cast<i16>(END_CHAIN_MOVE));
-    // Cast to u8 first, then to int to prevent the bugprone-signed-char-misuse lint error.
     const int captureMoveCount =
         static_cast<int>(static_cast<u8>(BOARD_METADATA.captureMoveCountByNode[state.activeCaptureIdx]));
     for (int k = 0; k < captureMoveCount; ++k) {
@@ -287,58 +420,32 @@ struct MoveList {
 }
 
 /**
- * @brief Applies a move to the board state and returns the resulting board state.
- * @note  No validity checks are performed. The caller must verify legitimacy beforehand.
- * @param state  Current BoardState.
- * @param moveId A valid move ID.
- * @return Resulting BoardState.
- */
-[[nodiscard]] inline boardState apply_move(const boardState& state, int moveId) noexcept {
-  boardState next = state;
-
-  if (moveId == END_CHAIN_MOVE) {
-    next.activeCaptureIdx = -1;
-    return next;
-  }
-
-  const move& mov = MOVE_TABLE[moveId];
-  // bitwise operations:
-  // - ~(1ULL << mov.from) creates a mask of all 1s except a 0 at index mov.from.
-  // - &= clears the piece from its starting node in next.me.
-  next.me &= ~(1ULL << mov.from);
-  // - |= sets the bit at mov.to, putting the piece in its new position in next.me.
-  next.me |= (1ULL << mov.to);
-
-  if (is_capture_move(moveId)) {
-    // - clears the opponent's captured piece by anding with the bitwise negation of the captured index mask.
-    next.opp &= ~(1ULL << mov.captured);
-    next.activeCaptureIdx = can_continue_capturing(next, mov.to) ? mov.to : static_cast<i8>(-1);
-  } else {
-    next.activeCaptureIdx = -1;
-  }
-
-  return next;
-}
-
-/**
  * @brief Evaluates and returns the current game status.
  * @details Detects win/loss based on piece counts or stalemate (no moves available).
  * @param state Current BoardState.
  * @return GameStatus::ME_WINS, GameStatus::OPP_WINS, or GameStatus::ONGOING.
  */
-[[nodiscard]] inline GameStatus get_game_status(const boardState& state) noexcept {
+[[nodiscard]] constexpr GameStatus get_game_status(const boardState& state) noexcept {
+  if (state.historyCount >= MAX_HISTORY_LIMIT) {
+    return GameStatus::DRAW_PROGRESS_RULE;
+  }
+
   if (piece_count(state.opp) == 0) {
-    return GameStatus::ME_WINS;
+    return GameStatus::ME_WINS_ELIMINATION;
   }
   if (piece_count(state.me) == 0) {
-    return GameStatus::OPP_WINS;
+    return GameStatus::OPP_WINS_ELIMINATION;
   }
+
+  if (state.activeCaptureIdx != -1) {
+    return GameStatus::ONGOING;
+  }
+
   if (all_possible_moves(state).empty()) {
-    return GameStatus::OPP_WINS;
+    return GameStatus::OPP_WINS_STALEMATE;
   }
-  boardState flipped = flip_board(state);
-  if (all_possible_moves(flipped).empty()) {
-    return GameStatus::ME_WINS;
+  if (all_possible_moves(flip_board(state)).empty()) {
+    return GameStatus::ME_WINS_STALEMATE;
   }
   return GameStatus::ONGOING;
 }

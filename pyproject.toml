@@ -3,7 +3,16 @@ name = "kribu"
 version = "0.1.0"
 description = "Sholo Guti AI Engine"
 requires-python = ">=3.10"
-dependencies = ["torch", "numpy", "rich", "nanobind", "pyarrow"]
+dependencies = [
+    "torch",
+    "numpy",
+    "rich",
+    "nanobind",
+    "duckdb",
+    "pandas>=2.3.3",
+    "tensorboard>=2.20.0",
+    "matplotlib",
+]
 
 [tool.ruff]
 line-length = 120

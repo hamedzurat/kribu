@@ -2,15 +2,46 @@ cmake_minimum_required(VERSION 3.24)
 project(kribu LANGUAGES CXX)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Use compiler-specific ar and ranlib to support LTO with Clang
+if(CMAKE_CXX_COMPILER_AR)
+  set(CMAKE_AR
+      ${CMAKE_CXX_COMPILER_AR}
+      CACHE PATH "AR" FORCE)
+endif()
+if(CMAKE_CXX_COMPILER_RANLIB)
+  set(CMAKE_RANLIB
+      ${CMAKE_CXX_COMPILER_RANLIB}
+      CACHE PATH "RANLIB" FORCE)
+endif()
+
+# Configure compiler launcher (ccache) if available
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+  message(STATUS "Using ccache: ${CCACHE_PROGRAM}")
+  set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+  set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Enable compiler optimizations and warnings
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  add_compile_options(-Wall -Wextra -Wpedantic -Wno-c2y-extensions)
+option(ENABLE_LTO "Enable Link Time Optimization (LTO)" OFF)
 
-  if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    add_compile_options(-O3 -march=native -mtune=native)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  add_compile_options(
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Wno-c2y-extensions
+    -O3
+    -march=native
+    -mtune=native
+    -fomit-frame-pointer)
+
+  if(ENABLE_LTO)
+    add_compile_options(-flto)
+    add_link_options(-flto)
   endif()
 endif()
 
